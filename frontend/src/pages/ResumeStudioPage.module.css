@@ -1,0 +1,275 @@
+.studioSplit {
+  display: grid;
+  grid-template-columns: minmax(430px, 1fr) minmax(480px, 1.15fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .studioSplit {
+    grid-template-columns: 1fr;
+  }
+}
+
+.leftControls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.panelCard {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.panelTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.presetGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.presetBtn {
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.presetBtnActive {
+  border-color: var(--brand-primary);
+  background: var(--brand-soft);
+  color: var(--text-primary);
+}
+
+.modeToggleRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.modeButton {
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface-elevated);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modeButtonActive {
+  border-color: var(--brand-primary);
+  background: var(--brand-soft);
+}
+
+.modeTitle {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.modeSub {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.twoCols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.reorderList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reorderItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 7px 10px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.bulletCard {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+
+.bulletCardInactive {
+  opacity: 0.62;
+  background: var(--bg-input);
+}
+
+.bulletControls {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.diffList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.diffBox {
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.diffBefore {
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--status-danger-bg);
+  color: var(--text-secondary);
+}
+
+.diffAfter {
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--status-ok-bg);
+  color: var(--text-primary);
+}
+
+/* Right A4 Live Preview Stage */
+.previewPane {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.meterCard {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meterHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.meterTrack {
+  height: 8px;
+  width: 100%;
+  background: var(--bg-input);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.meterFillOk {
+  height: 100%;
+  background: var(--status-ok);
+  transition: width 0.2s ease;
+}
+
+.meterFillWarn {
+  height: 100%;
+  background: var(--status-warn);
+  transition: width 0.2s ease;
+}
+
+.meterFillDanger {
+  height: 100%;
+  background: var(--status-danger);
+  transition: width 0.2s ease;
+}
+
+.paperStage {
+  background: var(--bg-paper-stage);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  overflow: auto;
+  max-height: calc(100vh - 180px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.paperScaleWrapper {
+  transform-origin: top center;
+  position: relative;
+}
+
+.a4Iframe {
+  width: 794px;
+  border: none;
+  background: #ffffff;
+  box-shadow: var(--shadow-paper);
+  display: block;
+}
+
+.pageBreakMarker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 2px dashed #ef4444;
+  pointer-events: none;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pageBreakTag {
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 0 0 4px 4px;
+}
+
+.exportResultCard {
+  padding: var(--space-3) var(--space-4);
+  border-color: var(--status-ok);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

@@ -1,0 +1,97 @@
+/* Resumatch Vanilla CSS Design Tokens — Refined Editorial Dark/Light System */
+
+:root,
+[data-theme='dark'] {
+  --bg-canvas: #0b0f17;
+  --bg-surface: #121826;
+  --bg-surface-elevated: #182132;
+  --bg-surface-hover: #1e293d;
+  --bg-input: #0e1420;
+  --bg-paper-stage: #1a2233;
+
+  --border-subtle: #232f46;
+  --border-strong: #324260;
+  --border-focus: #4f8cff;
+
+  --text-primary: #eef2f8;
+  --text-secondary: #a7b4ca;
+  --text-muted: #75849e;
+  --text-inverse: #090d14;
+
+  --brand-primary: #3b82f6;
+  --brand-primary-hover: #2563eb;
+  --brand-soft: rgba(59, 130, 246, 0.14);
+
+  --status-ok: #10b981;
+  --status-ok-bg: rgba(16, 185, 129, 0.14);
+  --status-warn: #f59e0b;
+  --status-warn-bg: rgba(245, 158, 11, 0.14);
+  --status-danger: #ef4444;
+  --status-danger-bg: rgba(239, 68, 68, 0.14);
+  --status-info: #60a5fa;
+  --status-info-bg: rgba(96, 165, 250, 0.14);
+  --status-purple: #a78bfa;
+  --status-purple-bg: rgba(167, 139, 250, 0.14);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.42);
+  --shadow-paper: 0 14px 38px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme='light'] {
+  --bg-canvas: #f3f6fb;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f8fafd;
+  --bg-surface-hover: #edf2f9;
+  --bg-input: #ffffff;
+  --bg-paper-stage: #dfe6f0;
+
+  --border-subtle: #dde4ef;
+  --border-strong: #c4cfdf;
+  --border-focus: #2563eb;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-inverse: #ffffff;
+
+  --brand-primary: #2563eb;
+  --brand-primary-hover: #1d4ed8;
+  --brand-soft: rgba(37, 99, 235, 0.1);
+
+  --status-ok: #059669;
+  --status-ok-bg: rgba(5, 150, 105, 0.11);
+  --status-warn: #d97706;
+  --status-warn-bg: rgba(217, 119, 6, 0.12);
+  --status-danger: #dc2626;
+  --status-danger-bg: rgba(220, 38, 38, 0.11);
+  --status-info: #2563eb;
+  --status-info-bg: rgba(37, 99, 235, 0.1);
+  --status-purple: #7c3aed;
+  --status-purple-bg: rgba(124, 58, 237, 0.11);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 10px 26px rgba(15, 23, 42, 0.09);
+  --shadow-paper: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+:root {
+  --font-sans: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --sidebar-width: 248px;
+}

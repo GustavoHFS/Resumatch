@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from app.adapters.llm.providers import LlmAdapterError
 from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager, PdfRenderError
 from app.adapters.pdf.html_renderer import render_resume_a4_html
 from app.api.routes import get_app_settings
-from app.core.config import AppSettings
+from app.core.config import AppSettings, assert_safe_path
 from app.core.database import get_db_session
+from app.models import ResumeVersion
 from app.services.resume_service import (
     ResumeComposeRequest,
     SurgicalAdaptRequest,
@@ -132,4 +135,26 @@ def get_resume_versions_endpoint(
         area_id=area_id,
         opportunity_id=opportunity_id,
         limit=limit,
+    )
+
+
+@router.get("/versions/{version_id}/pdf")
+def download_resume_version_pdf(
+    version_id: str,
+    session: Session = Depends(get_db_session),
+    settings: AppSettings = Depends(get_app_settings),
+) -> FileResponse:
+    version = session.get(ResumeVersion, version_id)
+    if version is None or not version.export_rel_path:
+        raise HTTPException(status_code=404, detail="Resume version PDF not found.")
+
+    base_dir = settings.safe_data_dir.resolve()
+    candidate_path = assert_safe_path(base_dir / Path(version.export_rel_path))
+    if base_dir not in candidate_path.parents or not candidate_path.is_file():
+        raise HTTPException(status_code=404, detail="Exported PDF file is missing on disk.")
+
+    return FileResponse(
+        path=candidate_path,
+        media_type="application/pdf",
+        filename=candidate_path.name,
     )

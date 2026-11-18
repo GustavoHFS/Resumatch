@@ -1,0 +1,19 @@
+# Strict isolation: NEVER copy local user_data, secrets, or git history into Docker layers
+user_data/
+!user_data/.gitkeep
+Dados Sensíveis/
+**/Dados Sensíveis/
+.git/
+.venv/
+venv/
+frontend/node_modules/
+frontend/dist/
+.env
+.env.*
+!.env.example
+*.pdf
+*.docx
+*.sqlite3
+*.sqlite3-*
+__pycache__/
+.pytest_cache/

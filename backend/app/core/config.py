@@ -46,6 +46,7 @@ class AppSettings(BaseSettings):
     version: str = "0.1.0"
     data_dir: Path = Field(default=REPO_ROOT / "user_data")
     examples_dir: Path = Field(default=REPO_ROOT / "examples")
+    frontend_dist_dir: Path = Field(default=REPO_ROOT / "frontend" / "dist")
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -88,6 +89,10 @@ class AppSettings(BaseSettings):
     @property
     def sources_path(self) -> Path:
         return assert_safe_path(self.safe_data_dir / "config" / "sources.json")
+
+    @property
+    def llm_settings_path(self) -> Path:
+        return assert_safe_path(self.safe_data_dir / "config" / "llm_settings.json")
 
     @property
     def exports_dir(self) -> Path:

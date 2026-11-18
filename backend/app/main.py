@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager
 from app.api.applications_routes import router as applications_router
 from app.api.jobs_routes import router as jobs_router
 from app.api.resumes_routes import router as resumes_router
-from app.api.routes import router as core_router
+from app.api.routes import PersistedLlmSettings, router as core_router
 from app.core.config import AppSettings, get_settings
 from app.core.database import create_sqlite_wal_engine, init_db_schema
 from app.services.scheduler_service import DiscoverySchedulerManager
@@ -44,6 +48,62 @@ def _ensure_workspace_files(settings: AppSettings) -> bool:
     return bootstrapped
 
 
+def _apply_persisted_llm_overrides(settings: AppSettings) -> None:
+    """Loads persisted UI LLM configuration from `user_data/config/llm_settings.json` if present."""
+    llm_file = settings.llm_settings_path
+    if not llm_file.is_file():
+        return
+    try:
+        persisted = PersistedLlmSettings.model_validate(
+            json.loads(llm_file.read_text(encoding="utf-8"))
+        )
+    except (OSError, ValueError):
+        return
+    settings.llm_provider = persisted.provider
+    settings.llm_timeout_seconds = persisted.timeout_seconds
+    settings.gemini_model = persisted.gemini_model
+    if persisted.gemini_api_key:
+        settings.gemini_api_key = persisted.gemini_api_key
+    settings.groq_model = persisted.groq_model
+    if persisted.groq_api_key:
+        settings.groq_api_key = persisted.groq_api_key
+    settings.ollama_base_url = persisted.ollama_base_url
+    settings.ollama_model = persisted.ollama_model
+
+
+def _mount_spa_frontend(application: FastAPI, dist_dir: Path) -> None:
+    """Serves Vite static build and SPA fallback when `frontend/dist/index.html` exists."""
+    resolved_dist = dist_dir.resolve()
+    index_file = resolved_dist / "index.html"
+    if not index_file.is_file():
+        return
+
+    assets_dir = resolved_dist / "assets"
+    if assets_dir.is_dir():
+        application.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="spa-assets",
+        )
+
+    @application.get("/", include_in_schema=False)
+    def serve_spa_root() -> FileResponse:
+        return FileResponse(index_file, media_type="text/html")
+
+    @application.get("/{full_path:path}", include_in_schema=False)
+    def serve_spa_fallback(full_path: str) -> FileResponse:
+        normalized = full_path.strip("/")
+        if normalized == "api" or normalized.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found.")
+
+        if normalized:
+            candidate = (resolved_dist / normalized).resolve()
+            if resolved_dist in candidate.parents and candidate.is_file():
+                return FileResponse(candidate)
+
+        return FileResponse(index_file, media_type="text/html")
+
+
 def create_app(
     settings: AppSettings | None = None,
     http_transport: httpx.AsyncBaseTransport | None = None,
@@ -54,6 +114,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         bootstrapped = _ensure_workspace_files(resolved_settings)
+        _apply_persisted_llm_overrides(resolved_settings)
         engine = create_sqlite_wal_engine(resolved_settings.db_path)
         journal_mode = init_db_schema(engine)
         scheduler = DiscoverySchedulerManager(db_engine=engine, settings=resolved_settings)
@@ -96,6 +157,7 @@ def create_app(
     application.include_router(jobs_router)
     application.include_router(resumes_router)
     application.include_router(applications_router)
+    _mount_spa_frontend(application, resolved_settings.frontend_dist_dir)
     return application
 
 
