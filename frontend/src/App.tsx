@@ -1,46 +1,38 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from './api/client';
 import styles from './App.module.css';
+import {
+  IconBoardCheck,
+  IconBriefcase,
+  IconGear,
+  IconStudioDoc,
+  IconUserDoc,
+} from './components/Icons';
+import { SettingsDrawer } from './components/SettingsDrawer';
 import { ApplicationsKanbanPage } from './pages/ApplicationsKanbanPage';
-import { DashboardJobsPage } from './pages/DashboardJobsPage';
-import { ProfileSettingsPage } from './pages/ProfileSettingsPage';
+import { BaseResumePage } from './pages/BaseResumePage';
+import { JobsPage } from './pages/JobsPage';
 import { ResumeStudioPage } from './pages/ResumeStudioPage';
 import type { HealthResponse, JobListItem, MasterProfile } from './types/api';
 
-type AppRoute = 'dashboard' | 'studio' | 'kanban' | 'profile';
+type NavTab = 'jobs' | 'studio' | 'applications' | 'profile';
 
-const ROUTE_TITLES: Record<AppRoute, { title: string; sub: string }> = {
-  dashboard: {
-    title: 'Painel & Caixa de Entrada de Vagas',
-    sub: 'Busca assíncrona HTTPS, triagem determinística em 3 eixos e planos internos de estudo',
-  },
-  studio: {
-    title: 'Estúdio Híbrido de Currículo A4',
-    sub: 'Composição determinística (< 20ms), IA Cirúrgica c/ PIIStripper + VeracityGuard e folha A4 ao vivo',
-  },
-  kanban: {
-    title: 'Kanban Auditado de Candidaturas',
-    sub: 'Ciclo de vida com hash SHA-256 imutável do PDF e confirmação explícita de envio manual',
-  },
-  profile: {
-    title: 'Perfil Mestre & Configurações Locais',
-    sub: 'Editor visual atômico substituindo currículos .docx manuais, com backups rotativos em user_data/',
-  },
-};
+const NAV_ITEMS: Array<{ key: NavTab; label: string; Icon: React.FC<{ size?: number }> }> = [
+  { key: 'jobs', label: 'Vagas', Icon: IconBriefcase },
+  { key: 'studio', label: 'Estúdio', Icon: IconStudioDoc },
+  { key: 'applications', label: 'Candidaturas', Icon: IconBoardCheck },
+  { key: 'profile', label: 'Currículo Base', Icon: IconUserDoc },
+];
 
 export const App: React.FC = () => {
-  const [route, setRoute] = useState<AppRoute>('dashboard');
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [activeTab, setActiveTab] = useState<NavTab>('jobs');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [profile, setProfile] = useState<MasterProfile | null>(null);
 
-  const [studioTargetJob, setStudioTargetJob] = useState<JobListItem | null>(null);
-  const [studioTargetArea, setStudioTargetArea] = useState<string | null>(null);
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+  const [studioJob, setStudioJob] = useState<JobListItem | null>(null);
+  const [studioJobDescription, setStudioJobDescription] = useState<string>('');
 
   const refreshHealth = useCallback(() => {
     api
@@ -61,137 +53,117 @@ export const App: React.FC = () => {
     refreshProfile();
   }, [refreshHealth, refreshProfile]);
 
-  const handleOpenInStudio = (job: JobListItem, suggestedAreaId?: string | null) => {
-    setStudioTargetJob(job);
-    setStudioTargetArea(suggestedAreaId ?? job.area_id ?? null);
-    setRoute('studio');
+  useEffect(() => {
+    const clientId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `tab_${Math.random().toString(36).slice(2, 10)}`;
+
+    void api.pingLifecycle(clientId).catch(() => {});
+    const hbTimer = window.setInterval(() => {
+      void api.pingLifecycle(clientId).catch(() => {});
+    }, 4000);
+
+    const handlePageHide = () => {
+      try {
+        const blob = new Blob([JSON.stringify({ client_id: clientId })], {
+          type: 'application/json',
+        });
+        navigator.sendBeacon('/api/lifecycle/close', blob);
+      } catch {
+        // ignore unload errors
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      window.clearInterval(hbTimer);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, []);
+
+  const handleAdaptJob = (job: JobListItem, descriptionText: string) => {
+    setStudioJob(job);
+    setStudioJobDescription(descriptionText);
+    setActiveTab('studio');
   };
 
-  const meta = ROUTE_TITLES[route];
-
   return (
-    <div className={styles.shell}>
-      <aside className={styles.sidebar}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
-          <div className={styles.brandBlock}>
-            <span className={styles.brandName}>Resumatch</span>
-            <span className={styles.brandTagline}>
-              Local-First Job Triage &amp; ATS A4 Studio
-            </span>
-          </div>
+    <div className={styles.appShell}>
+      <header className={styles.topBar}>
+        <button
+          type="button"
+          className={styles.wordmark}
+          onClick={() => setActiveTab('jobs')}
+        >
+          <img
+            src="/logo-chibi.svg"
+            alt=""
+            width={30}
+            height={30}
+            className={styles.brandLogo}
+          />
+          <span className={styles.wordmarkText}>Resumatch</span>
+        </button>
 
-          <nav className={styles.navMenu} aria-label="Navegação Principal">
+        <nav className={styles.navLinks} aria-label="Navegação principal">
+          {NAV_ITEMS.map(({ key, label, Icon }) => (
             <button
+              key={key}
               type="button"
-              className={`${styles.navItem} ${route === 'dashboard' ? styles.navItemActive : ''}`}
-              onClick={() => setRoute('dashboard')}
+              className={`${styles.navLink} ${
+                activeTab === key ? styles.navLinkActive : ''
+              }`}
+              onClick={() => setActiveTab(key)}
             >
-              <span>Caixa de Vagas</span>
-              {health && (
-                <span className="badge badgeNeutral">{health.counts.opportunities}</span>
-              )}
+              <Icon size={17} />
+              <span>{label}</span>
             </button>
+          ))}
+        </nav>
 
-            <button
-              type="button"
-              className={`${styles.navItem} ${route === 'studio' ? styles.navItemActive : ''}`}
-              onClick={() => setRoute('studio')}
-            >
-              <span>Estúdio A4</span>
-              {profile && (
-                <span className="badge badgeInfo">
-                  {Object.keys(profile.area_presets).length} presets
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.navItem} ${route === 'kanban' ? styles.navItemActive : ''}`}
-              onClick={() => setRoute('kanban')}
-            >
-              <span>Kanban</span>
-              {health && (
-                <span className="badge badgeNeutral">{health.counts.tracked_applications}</span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.navItem} ${route === 'profile' ? styles.navItemActive : ''}`}
-              onClick={() => setRoute('profile')}
-            >
-              <span>Perfil &amp; Configs</span>
-            </button>
-          </nav>
-        </div>
-
-        <div className={styles.sidebarFooter}>
+        <div className={styles.rightSlot}>
           <button
             type="button"
-            className="btn btnSmall"
-            onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+            className="iconBtn"
+            title="Configurações"
+            aria-label="Configurações"
+            onClick={() => setSettingsOpen(true)}
           >
-            Tema: {theme === 'dark' ? 'Escuro Sóbrio' : 'Claro Editorial'}
+            <IconGear size={18} />
           </button>
-
-          {health?.bootstrapped_demo && (
-            <span className="badge badgeWarn">Modo Demo (examples/)</span>
-          )}
-
-          <div>
-            SQLite WAL • IA: <strong>{health?.llm_provider ?? 'none'}</strong>
-          </div>
-          <div>Dados isolados em <code>./user_data/</code></div>
         </div>
-      </aside>
+      </header>
 
-      <div className={styles.mainArea}>
-        <header className={styles.topBar}>
-          <div>
-            <h1 className={styles.pageTitle}>{meta.title}</h1>
-            <p className={styles.pageSub}>{meta.sub}</p>
-          </div>
-          {profile && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span className="badge badgeInfo">{profile.header.full_name}</span>
-              <span className="badge badgeNeutral">
-                {profile.header.city}/{profile.header.state}
-              </span>
-            </div>
-          )}
-        </header>
+      <main className={styles.mainContent}>
+        <div key={activeTab} className={styles.pageStage}>
+          {activeTab === 'jobs' && <JobsPage onAdaptJob={handleAdaptJob} />}
 
-        <main className={styles.contentBody}>
-          {route === 'dashboard' && (
-            <DashboardJobsPage
-              health={health}
-              areaPresets={profile?.area_presets ?? {}}
-              onRefreshHealth={refreshHealth}
-              onOpenInStudio={handleOpenInStudio}
-            />
-          )}
-
-          {route === 'studio' && (
+          {activeTab === 'studio' && (
             <ResumeStudioPage
-              profile={profile}
-              initialJob={studioTargetJob}
-              initialAreaId={studioTargetArea}
-              onRefreshHealth={refreshHealth}
+              aiConnected={Boolean(health?.ai_connected)}
+              initialJob={studioJob}
+              initialJobDescription={studioJobDescription}
+              onAiConnected={refreshHealth}
             />
           )}
 
-          {route === 'kanban' && <ApplicationsKanbanPage onRefreshHealth={refreshHealth} />}
+          {activeTab === 'applications' && <ApplicationsKanbanPage />}
 
-          {route === 'profile' && (
-            <ProfileSettingsPage
+          {activeTab === 'profile' && (
+            <BaseResumePage
               profile={profile}
               onProfileSaved={(updated) => setProfile(updated)}
-              onRefreshHealth={refreshHealth}
             />
           )}
-        </main>
-      </div>
+        </div>
+      </main>
+
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onLlmUpdated={refreshHealth}
+      />
     </div>
   );
 };

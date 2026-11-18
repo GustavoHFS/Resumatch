@@ -1,6 +1,7 @@
 /* ==========================================================================
-   Resumatch — ATS-Clean Semantic A4 Stylesheet (Pure Vanilla CSS)
-   Zero layout tables, zero multi-column traps, zero CSS visual reordering.
+   Resumatch v2.2 — ATS-Clean Semantic A4 Stylesheet (Pure Vanilla CSS)
+   - OpenType ligatures strictly disabled (`fi`/`fl` never merge into U+FB01/U+FB02).
+   - Zero layout tables, zero multi-column traps, linear DOM order with right-aligned dates.
    ========================================================================== */
 
 @page {
@@ -12,17 +13,21 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "dlig" 0;
 }
 
 html,
 body {
   background: #ffffff;
   color: #111111;
-  font-family: "Libre Franklin", -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  font-family: var(--resume-font-family, "Libre Franklin", Arial, sans-serif);
   font-size: 10.5pt;
   font-weight: 400;
   line-height: 1.42;
   text-align: left;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "clig" 0, "dlig" 0;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -33,6 +38,10 @@ body {
   margin: 0 auto;
 }
 
+.resume-flow {
+  width: 100%;
+}
+
 /* Compact spacing fallback used by deterministic auto_fit when content slightly overflows */
 .resume-sheet.compact-mode {
   font-size: 10.1pt;
@@ -41,19 +50,27 @@ body {
 
 /* Header */
 .resume-header {
-  margin-bottom: 9pt;
+  margin-bottom: 8.5pt;
 }
 
 .candidate-name {
-  font-size: 14pt;
+  font-size: 14.5pt;
   font-weight: 700;
   line-height: 1.2;
   color: #000000;
-  margin-bottom: 3pt;
+  margin-bottom: 2pt;
+}
+
+.target-role-line {
+  font-size: 11pt;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #1f1f1f;
+  margin-bottom: 2.5pt;
 }
 
 .header-line {
-  font-size: 10.5pt;
+  font-size: 10.2pt;
   line-height: 1.35;
   color: #1f1f1f;
 }
@@ -75,11 +92,11 @@ body {
 
 /* Sections */
 .resume-section {
-  margin-top: 9pt;
+  margin-top: 8.5pt;
 }
 
 .resume-sheet.compact-mode .resume-section {
-  margin-top: 6.5pt;
+  margin-top: 6pt;
 }
 
 .page-break-before {
@@ -88,30 +105,30 @@ body {
 }
 
 .section-heading {
-  font-size: 11.2pt;
+  font-size: 11pt;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   color: #000000;
   border-bottom: 0.75pt solid #1a1a1a;
   padding-bottom: 2pt;
-  margin-bottom: 5.5pt;
+  margin-bottom: 5pt;
   break-after: avoid;
   page-break-after: avoid;
 }
 
 .resume-sheet.compact-mode .section-heading {
-  margin-bottom: 4pt;
+  margin-bottom: 3.8pt;
 }
 
 .summary-paragraph {
-  font-size: 10.5pt;
+  font-size: 10.4pt;
   line-height: 1.42;
   text-align: left;
 }
 
 .resume-sheet.compact-mode .summary-paragraph {
-  font-size: 10.1pt;
+  font-size: 10pt;
   line-height: 1.32;
 }
 
@@ -130,20 +147,30 @@ body {
   margin-bottom: 4.5pt;
 }
 
+.entry-head-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10pt;
+}
+
 .entry-title-line {
   font-size: 10.5pt;
   line-height: 1.36;
 }
 
-.entry-sub-line {
-  font-size: 10.3pt;
-  line-height: 1.34;
-}
-
-.entry-period-line {
-  font-size: 10pt;
+.entry-right-meta {
+  font-size: 9.8pt;
   line-height: 1.32;
   color: #222222;
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.entry-sub-line {
+  font-size: 10.2pt;
+  line-height: 1.34;
 }
 
 /* Lists (Experience bullets & Skill categories) */
@@ -151,13 +178,13 @@ body {
 .skills-list {
   list-style-type: disc;
   padding-left: 15pt;
-  margin-top: 3pt;
+  margin-top: 2.8pt;
 }
 
 .bullet-list li,
 .skills-list li {
-  margin-bottom: 2.2pt;
-  line-height: 1.4;
+  margin-bottom: 2pt;
+  line-height: 1.38;
   text-align: left;
 }
 
@@ -168,25 +195,26 @@ body {
 
 .resume-sheet.compact-mode .bullet-list li,
 .resume-sheet.compact-mode .skills-list li {
-  margin-bottom: 1.2pt;
-  line-height: 1.3;
+  margin-bottom: 1.1pt;
+  line-height: 1.29;
 }
 
 .course-line,
 .languages-line {
-  font-size: 10.5pt;
-  line-height: 1.4;
+  font-size: 10.4pt;
+  line-height: 1.38;
 }
 
 strong {
   font-weight: 700;
 }
 
-/* Screen preview framing (ignored in @media print) */
+/* Screen preview framing (zero external body padding so iframe measurement is exact!) */
 @media screen {
   body.standalone-preview {
-    background: #e5e7eb;
-    padding: 20px 0;
+    background: #ffffff;
+    padding: 0;
+    margin: 0;
   }
 
   body.standalone-preview .resume-sheet {
@@ -195,7 +223,6 @@ strong {
     max-width: 210mm;
     padding: 14mm 15mm;
     background: #ffffff;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
   }
 }
 

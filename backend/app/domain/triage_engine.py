@@ -17,9 +17,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field
 
+from app.domain.labels_pt import build_job_human_labels
 from app.models.blocked_schema import BlockedCompaniesConfig
 from app.models.criteria_schema import SearchCriteria
-from app.models.profile_schema import MasterProfile, SkillItem, StrictModel
+from app.models.profile_schema import MasterProfile, StrictModel
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.IGNORECASE)
 
@@ -117,6 +118,78 @@ def _normalize_company_name(value: str | None) -> str:
     return re.sub(r"\s+(?:ltda|s/?a|eireli|me|epp)\.?$", "", base).strip()
 
 
+CONFIDENTIAL_COMPANY_NAMES = {
+    "",
+    "confidencial",
+    "empresa confidencial",
+    "empresa",
+    "nao informada",
+    "nao informado",
+    "sigiloso",
+    "oculto",
+    "a combinar",
+    "diversas empresas",
+}
+
+
+def _slugify_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", normalize_text(value)).strip("-")
+
+
+def compute_cross_portal_signature(
+    company: str | None,
+    title: str | None,
+    location: str | None = None,
+    workplace_mode: str | None = None,
+) -> str | None:
+    """Computes `xportal:<slug(company)>__<slug(clean_title)>__<slug(city_or_remoto)>`
+    to unify identical jobs published simultaneously across multiple job portals."""
+    comp_norm = _normalize_company_name(company)
+    if comp_norm in CONFIDENTIAL_COMPANY_NAMES or len(comp_norm) < 2:
+        return None
+    comp_slug = _slugify_token(comp_norm)
+    if not comp_slug:
+        return None
+
+    t = normalize_text(title or "").strip()
+    if len(t) < 3:
+        return None
+    # Strip portal prefixes/suffixes, bracketed tags, and trailing location suffixes
+    t = re.sub(r"^\[[^\]]+\]\s*", "", t)
+    t = re.sub(r"\((?:remoto|hibrido|presencial|clt|pj|vaga\s+afirmativa[^)]*)\)", " ", t)
+    t = re.sub(r"^vaga\s+(?:de|para)\s+", "", t)
+    t = re.sub(r"\s+[-/·|]\s+(?:recife|olinda|jaboatao|paulista|camaragibe|pernambuco|pe|brasil|remoto|home\s*office).*$", "", t)
+    t = re.sub(r"\bpessoa\s+desenvolvedora\b", "desenvolvedor", t)
+    t = re.sub(r"\bdesenvolvedora\b", "desenvolvedor", t)
+    t = re.sub(r"\banalista\s+de\b", "analista", t)
+    t = re.sub(r"\bjr\.?\b", "junior", t)
+    t = re.sub(r"\bpl\.?\b", "pleno", t)
+    t = re.sub(r"\bsr\.?\b", "senior", t)
+    title_slug = _slugify_token(t)
+    if not title_slug:
+        return None
+
+    loc_norm = normalize_text(location or "").strip()
+    wp_norm = normalize_text(workplace_mode or "").strip()
+    if (
+        wp_norm == "remoto"
+        or "remoto" in loc_norm
+        or "home office" in loc_norm
+        or "todo o brasil" in loc_norm
+        or "remote" in loc_norm
+        or "remoto" in normalize_text(title or "")
+    ):
+        loc_slug = "remoto"
+    elif loc_norm:
+        primary_city = re.split(r"[,;/\-·|]", loc_norm)[0].strip()
+        primary_city = re.sub(r"\b(?:br|brasil|brazil|estado\s+de\s+\w+)\b", "", primary_city).strip()
+        loc_slug = _slugify_token(primary_city) or "geral"
+    else:
+        loc_slug = "geral"
+
+    return f"xportal:{comp_slug}__{title_slug}__{loc_slug}"
+
+
 class RawJobInput(StrictModel):
     source: str = "manual:import"
     source_id: str | None = None
@@ -149,14 +222,10 @@ class RawJobInput(StrictModel):
 
 
 class MatchedRequirement(StrictModel):
-    skill_id: str
     skill_name: str
     matched_keywords: list[str]
     requirement_kind: Literal["mandatory", "desirable", "responsibility", "optional", "unspecified"]
     excerpt: str
-    veracity_state: str
-    can_appear_on_resume: bool
-    study_plan: str | None = None
 
 
 class ShortPrepPlanItem(StrictModel):
@@ -171,6 +240,9 @@ class UnmappedRequirement(StrictModel):
 
 
 class TriageResult(StrictModel):
+    # Human-readable Portuguese labels (zero snake_case)
+    labels: dict[str, str] = Field(default_factory=dict)
+
     # Axis 1: Professional Compatibility & Classification
     classification: Literal[
         "aprovada",
@@ -214,10 +286,9 @@ class TriageResult(StrictModel):
     matched_city_slug: str | None
     geography_state: Literal["allowed", "outside", "pending"]
 
-    # Skills & Gap Breakdown
+    # Skills & Short Prep Breakdown
     matched_skills: list[str]
-    preparable_gaps: list[str]
-    unconfirmed_skills: list[str]
+    preparable_gaps: list[str] = Field(default_factory=list)
     requirements: list[MatchedRequirement]
     short_prep_plans: list[ShortPrepPlanItem]
     unmapped_requirements: list[UnmappedRequirement]
@@ -252,13 +323,34 @@ class DeterministicTriageEngine:
         self.criteria = criteria
         self.blocked = blocked
         self.profile = profile
-        self.skills_by_id: dict[str, SkillItem] = {s.id: s for s in profile.skills}
-        self._skill_patterns: dict[str, re.Pattern[str]] = {}
-        for skill in profile.skills:
-            aliases = [normalize_text(a) for a in [skill.display_name, *skill.aliases] if a.strip()]
-            if aliases:
-                joined = "|".join(re.escape(a) for a in dict.fromkeys(aliases))
-                self._skill_patterns[skill.id] = re.compile(r"(?<!\w)(?:" + joined + r")(?!\w)")
+        self._skill_terms: list[tuple[str, list[str], re.Pattern[str]]] = []
+        self._norm_skill_tokens: set[str] = set()
+
+        for raw_tag in profile.skills:
+            base = re.sub(r"\([^)]*\)", "", raw_tag).strip()
+            inside_parens = [
+                part.strip()
+                for grp in re.findall(r"\(([^)]+)\)", raw_tag)
+                for part in re.split(r"[,/]", grp)
+                if part.strip()
+            ]
+            split_conj = [
+                p.strip()
+                for p in re.split(r"\s+(?:e|and|/)\s+", base, flags=re.IGNORECASE)
+                if len(p.strip()) >= 2
+            ]
+            variants = [
+                v for v in dict.fromkeys([raw_tag.strip(), base, *inside_parens, *split_conj]) if v
+            ]
+            norm_variants = [normalize_text(v) for v in variants if normalize_text(v)]
+            for nv in norm_variants:
+                self._norm_skill_tokens.add(nv)
+                self._norm_skill_tokens.add(nv.replace(" ", "_"))
+            if norm_variants:
+                pattern = re.compile(
+                    r"(?<!\w)(?:" + "|".join(re.escape(nv) for nv in norm_variants) + r")(?!\w)"
+                )
+                self._skill_terms.append((raw_tag, variants, pattern))
 
     def evaluate_geography(self, location_text: str | None) -> tuple[Literal["allowed", "outside", "pending"], str | None]:
         raw_norm = normalize_text(location_text or "").strip()
@@ -413,11 +505,13 @@ class DeterministicTriageEngine:
 
     def _extract_requirements(
         self, description: str
-    ) -> tuple[list[MatchedRequirement], list[UnmappedRequirement], list[SkillItem]]:
+    ) -> tuple[list[MatchedRequirement], list[UnmappedRequirement], list[str]]:
         adapted = self._normalize_section_headers(description)
         norm_full = normalize_text(adapted)
-        relevant_skills = [
-            s for s in self.profile.skills if s.id in self._skill_patterns and self._skill_patterns[s.id].search(norm_full)
+        relevant_entries = [
+            (tag, variants, pat)
+            for (tag, variants, pat) in self._skill_terms
+            if pat.search(norm_full)
         ]
 
         matched_reqs: list[MatchedRequirement] = []
@@ -455,46 +549,26 @@ class DeterministicTriageEngine:
                 kind = "unspecified"
 
             line_matched = False
-            for skill in relevant_skills:
-                # Guard false-positive 'home office' -> 'Office' or 'redes sociais' -> 'Redes'
-                if skill.id == "office" and not re.search(
+            for tag, variants, _ in relevant_entries:
+                norm_tag = normalize_text(tag)
+                if norm_tag == "office" and not re.search(
                     r"\boffice\b", re.sub(r"home[ -]?office", "", n)
                 ):
                     continue
-                if skill.id == "redes" and re.search(r"redes sociais|social networks", n):
+                if norm_tag.startswith("redes") and re.search(r"redes sociais|social networks", n):
                     continue
 
-                terms = [
-                    a
-                    for a in [skill.display_name, *skill.aliases]
-                    if a.strip() and contains_term(line, a)
-                ]
+                terms = [v for v in variants if v.strip() and contains_term(line, v)]
                 if not terms:
                     continue
                 line_matched = True
 
-                state = skill.veracity
-                study_plan = skill.study_plan
-                can_resume = skill.can_appear_on_resume
-
-                if state == "academic_foundation" and re.search(
-                    r"avancad|especialista|dominio|producao", n
-                ):
-                    state = "unconfirmed_advanced_scope"
-                    study_plan = (
-                        "Há base acadêmica declarada, mas o domínio avançado exigido requer avaliação."
-                    )
-
                 matched_reqs.append(
                     MatchedRequirement(
-                        skill_id=skill.id,
-                        skill_name=skill.display_name,
+                        skill_name=tag,
                         matched_keywords=list(dict.fromkeys(terms)),
                         requirement_kind=kind,
                         excerpt=line,
-                        veracity_state=state,
-                        can_appear_on_resume=can_resume,
-                        study_plan=study_plan,
                     )
                 )
 
@@ -502,11 +576,10 @@ class DeterministicTriageEngine:
                 if n not in {"conhecimentos:", "conhecimentos"}:
                     unmapped.append(UnmappedRequirement(text=line, requirement_kind=kind))
 
-        # If structured sections existed, drop stray unspecified matches from intro paragraphs
         if any(r.requirement_kind in {"mandatory", "desirable", "responsibility"} for r in matched_reqs):
             matched_reqs = [r for r in matched_reqs if r.requirement_kind != "unspecified"]
 
-        return matched_reqs, unmapped, relevant_skills
+        return matched_reqs, unmapped, [tag for (tag, _, _) in relevant_entries]
 
     def _evaluate_method_and_automation(
         self, job: RawJobInput
@@ -846,15 +919,20 @@ class DeterministicTriageEngine:
             hard_incompatibilities.append("Vaga encerrada na fonte")
 
         # 7. Requirements, Short-Prep Plans, & Mandatory Experience Threshold
-        reqs, unmapped, relevant_skills = self._extract_requirements(clean_desc)
+        reqs, unmapped, _ = self._extract_requirements(clean_desc)
         short_plans: list[ShortPrepPlanItem] = []
-        relevant_ids = {s.id for s in relevant_skills}
+        preparable_names_list: list[str] = []
 
         for rule in self.criteria.short_prep_rules:
             matching_lines = [
                 ln for ln in clean_desc.splitlines() if any(contains_term(ln, a) for a in rule.aliases)
             ]
-            if not matching_lines or not (set(rule.prerequisite_skill_ids) & relevant_ids):
+            has_prereq = any(
+                normalize_text(pr).replace(" ", "_") in self._norm_skill_tokens
+                or normalize_text(pr) in self._norm_skill_tokens
+                for pr in rule.prerequisite_skill_ids
+            )
+            if not matching_lines or not has_prereq:
                 continue
             if any(
                 re.search(r"dominio avancado|especialista|producao.{0,15}(?:obrigator|exigid)", normalize_text(ln))
@@ -862,32 +940,14 @@ class DeterministicTriageEngine:
             ):
                 technical_notes.append(f"Avaliar escopo avançado exigido de {rule.term}")
                 continue
-            already_mapped = [
-                r for r in reqs if any(contains_term(r.skill_name, a) for a in rule.aliases)
-            ]
+            already_mapped = any(
+                any(contains_term(r.skill_name, a) for a in rule.aliases) for r in reqs
+            )
             if not already_mapped:
-                reqs.append(
-                    MatchedRequirement(
-                        skill_id=f"prep_{normalize_text(rule.term).replace(' ', '_')}",
-                        skill_name=rule.term,
-                        matched_keywords=rule.aliases,
-                        requirement_kind="mandatory",
-                        excerpt=matching_lines[0].strip(),
-                        veracity_state="preparable_gap",
-                        can_appear_on_resume=False,
-                        study_plan=rule.study_plan,
-                    )
+                preparable_names_list.append(rule.term)
+                short_plans.append(
+                    ShortPrepPlanItem(term=rule.term, study_plan=rule.study_plan, acquired=False)
                 )
-            short_plans.append(ShortPrepPlanItem(term=rule.term, study_plan=rule.study_plan, acquired=False))
-
-        for r in reqs:
-            if r.study_plan and not r.can_appear_on_resume:
-                if not any(p.term == r.skill_name for p in short_plans):
-                    short_plans.append(
-                        ShortPrepPlanItem(term=r.skill_name, study_plan=r.study_plan, acquired=False)
-                    )
-            if r.requirement_kind == "mandatory" and r.veracity_state.startswith("unconfirmed"):
-                technical_notes.append(f"Verificar profundidade exigida: {r.excerpt}")
 
         max_exp_months = self.criteria.career_focus.max_mandatory_experience_months
         for raw_clause, norm_clause in self._iter_affirmative_clauses(clean_desc):
@@ -924,40 +984,28 @@ class DeterministicTriageEngine:
             ):
                 blocking_pendencies.append(f"Confirmar elegibilidade de vaga afirmativa/exclusiva: {raw_clause}")
 
-        # 8. Area Scoring & Seniority Tier (100% Equal Priority Across Configured Areas)
-        catalog_areas = [
+        # 8. Area Scoring & Seniority Tier (Driven by SearchCriteria.role_catalog)
+        configured_areas = [
             a for a in self.criteria.role_catalog.area_keywords if a != "ti_geral"
         ]
-        preset_areas = [
-            a for a in self.profile.area_presets if a not in {"generalista", "suporte-en"}
-        ]
-        configured_areas = list(dict.fromkeys([*preset_areas, *catalog_areas]))
         area_scores: dict[str, int] = {area: 0 for area in configured_areas}
 
         for cat_area, keywords in self.criteria.role_catalog.area_keywords.items():
-            hits = sum(1 for kw in keywords if contains_term(job.title, kw))
-            if hits and cat_area in area_scores:
-                area_scores[cat_area] += 30 * hits
-            elif hits and cat_area == "ti_geral" and "suporte" in area_scores:
+            title_hits = sum(1 for kw in keywords if contains_term(job.title, kw))
+            desc_hits = sum(1 for kw in keywords if contains_term(clean_desc, kw))
+            if title_hits and cat_area in area_scores:
+                area_scores[cat_area] += 30 * title_hits
+            elif title_hits and cat_area == "ti_geral" and "suporte" in area_scores:
                 if not any(v > 0 for v in area_scores.values()):
                     area_scores["suporte"] += 20
-
-        seen_skill_pairs: set[tuple[str, str]] = set()
-        for r in reqs:
-            pair = (r.skill_id, r.requirement_kind)
-            if pair in seen_skill_pairs or r.skill_id not in self.skills_by_id:
-                continue
-            seen_skill_pairs.add(pair)
-            weight = {"mandatory": 3, "responsibility": 2, "desirable": 1}.get(r.requirement_kind, 1)
-            for sk_area in self.skills_by_id[r.skill_id].areas:
-                if sk_area in area_scores:
-                    area_scores[sk_area] += weight
+            if desc_hits and cat_area in area_scores:
+                area_scores[cat_area] += min(15, 3 * desc_hits)
 
         best_score = max(area_scores.values()) if area_scores else 0
         winners = [a for a, sc in area_scores.items() if sc == best_score and sc > 0]
-        selected_area = winners[0] if len(winners) == 1 else None
-        if not selected_area:
-            operational_omissions.append("Definir área principal do currículo (correspondência ambígua)")
+        selected_area = winners[0] if len(winners) == 1 else (winners[0] if winners else None)
+        if not winners:
+            operational_omissions.append("Área temática identificada de forma geral")
 
         is_senior = any(
             contains_term(job.title, sig)
@@ -979,13 +1027,8 @@ class DeterministicTriageEngine:
         if job.incomplete_summary or len(clean_desc.strip()) < 80:
             operational_omissions.append("Obter descrição integral para avaliação completa de requisitos")
 
-        matched_names = sorted({r.skill_name for r in reqs if r.can_appear_on_resume})
-        preparable_names = sorted(
-            {r.skill_name for r in reqs if r.veracity_state == "preparable_gap"}
-        )
-        unconfirmed_names = sorted(
-            {r.skill_name for r in reqs if r.veracity_state.startswith("unconfirmed")}
-        )
+        matched_names = sorted({r.skill_name for r in reqs})
+        preparable_names = sorted(set(preparable_names_list))
 
         # Relevance & Practical Priority Scoring
         relevance = min(
@@ -1078,7 +1121,19 @@ class DeterministicTriageEngine:
             else "descoberta"
         )
 
+        human_labels = build_job_human_labels(
+            classification=classification,
+            compatibility=prof_compat,
+            operational_status=op_status,
+            automation_capability=auto["capability"],
+            stage=initial_stage,
+            workplace_mode=mode,
+            career_tier=career_tier,
+            service_tier=auto["tier"],
+        )
+
         return TriageResult(
+            labels=human_labels,
             classification=classification,
             professional_compatibility=prof_compat,
             local_prep_allowed=local_prep_allowed,
@@ -1100,7 +1155,6 @@ class DeterministicTriageEngine:
             geography_state=geo_state,
             matched_skills=matched_names,
             preparable_gaps=preparable_names,
-            unconfirmed_skills=unconfirmed_names,
             requirements=reqs,
             short_prep_plans=short_plans,
             unmapped_requirements=unmapped,

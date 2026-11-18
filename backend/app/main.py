@@ -49,7 +49,7 @@ def _ensure_workspace_files(settings: AppSettings) -> bool:
 
 
 def _apply_persisted_llm_overrides(settings: AppSettings) -> None:
-    """Loads persisted UI LLM configuration from `user_data/config/llm_settings.json` if present."""
+    """Auto-activates saved Google Gemini key from `user_data/config/llm_settings.json` on startup."""
     llm_file = settings.llm_settings_path
     if not llm_file.is_file():
         return
@@ -59,16 +59,10 @@ def _apply_persisted_llm_overrides(settings: AppSettings) -> None:
         )
     except (OSError, ValueError):
         return
-    settings.llm_provider = persisted.provider
-    settings.llm_timeout_seconds = persisted.timeout_seconds
-    settings.gemini_model = persisted.gemini_model
+    if persisted.gemini_model:
+        settings.gemini_model = persisted.gemini_model
     if persisted.gemini_api_key:
         settings.gemini_api_key = persisted.gemini_api_key
-    settings.groq_model = persisted.groq_model
-    if persisted.groq_api_key:
-        settings.groq_api_key = persisted.groq_api_key
-    settings.ollama_base_url = persisted.ollama_base_url
-    settings.ollama_model = persisted.ollama_model
 
 
 def _mount_spa_frontend(application: FastAPI, dist_dir: Path) -> None:
@@ -86,9 +80,11 @@ def _mount_spa_frontend(application: FastAPI, dist_dir: Path) -> None:
             name="spa-assets",
         )
 
+    no_cache_headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
     @application.get("/", include_in_schema=False)
     def serve_spa_root() -> FileResponse:
-        return FileResponse(index_file, media_type="text/html")
+        return FileResponse(index_file, media_type="text/html", headers=no_cache_headers)
 
     @application.get("/{full_path:path}", include_in_schema=False)
     def serve_spa_fallback(full_path: str) -> FileResponse:
@@ -101,7 +97,7 @@ def _mount_spa_frontend(application: FastAPI, dist_dir: Path) -> None:
             if resolved_dist in candidate.parents and candidate.is_file():
                 return FileResponse(candidate)
 
-        return FileResponse(index_file, media_type="text/html")
+        return FileResponse(index_file, media_type="text/html", headers=no_cache_headers)
 
 
 def create_app(
@@ -131,6 +127,12 @@ def create_app(
         application.state.pdf_browser_manager = pdf_browser_manager
         application.state.http_transport = http_transport
         application.state.llm_transport = llm_transport
+        application.state.lifecycle = {
+            "active_clients": {},
+            "ever_connected": False,
+            "last_seen_at": None,
+            "closed_signal": False,
+        }
         try:
             yield
         finally:

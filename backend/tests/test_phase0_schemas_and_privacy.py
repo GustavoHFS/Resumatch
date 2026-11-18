@@ -1,8 +1,7 @@
-"""Phase 0 test suite: Pydantic v2 schemas, veracity invariants, privacy guard, and Git hooks."""
+"""Phase 0 test suite: Unified MasterProfile v2.0 schema, v1->v2 migration, privacy guard, and Git hooks."""
 
 from __future__ import annotations
 
-import copy
 import json
 import shutil
 import subprocess
@@ -16,10 +15,12 @@ from app.models import (
     JobSourcesConfig,
     MasterProfile,
     SearchCriteria,
+    SectionLabels,
 )
 from scripts.bootstrap_demo import bootstrap_demo_workspace
 from scripts.check_privacy import run_scan
 from scripts.install_hooks import HOOK_MARKER, install_pre_commit_hook, is_hook_installed
+from scripts.migrate_profile_v2 import convert_v1_dict_to_v2
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_DIR = REPO_ROOT / "examples"
@@ -30,26 +31,27 @@ def _load_example(filename: str) -> dict:
 
 
 class TestPublicExampleFiles:
-    def test_master_profile_example_is_valid_and_supports_pt_and_en_presets(self) -> None:
+    def test_master_profile_v2_example_is_unified_clean_and_flexible(self) -> None:
         raw = _load_example("master_profile.example.json")
         profile = MasterProfile.model_validate(raw)
 
+        assert profile.schema_version == "2.1"
         assert profile.header.full_name == "Marina Alves Costa"
-        assert "dev" in profile.area_presets
-        assert "suporte" in profile.area_presets
-        assert "suporte-en" in profile.area_presets
+        assert len(profile.summary) > 40
+        assert len(profile.experiences) == 1
+        assert "Help Desk" in profile.experiences[0].description
+        assert profile.courses[0].workload == "40 horas"
+        assert profile.courses[0].completion_date == "2026"
+        assert not hasattr(profile.projects[0], "period_or_role")
+        assert isinstance(profile.skills, list)
+        assert all(isinstance(tag, str) for tag in profile.skills)
+        assert "Java" in profile.skills
+        assert "Windows" in profile.skills
 
-        en_preset = profile.area_presets["suporte-en"]
-        assert en_preset.locale == "en-US"
-        assert en_preset.show_age is False
-        assert en_preset.section_labels.summary == "PROFESSIONAL SUMMARY"
-        assert en_preset.section_labels.experience == "EXPERIENCE"
-
-        skills_by_id = {s.id: s for s in profile.skills}
-        assert skills_by_id["glpi"].can_appear_on_resume is False
-        assert skills_by_id["docker"].can_appear_on_resume is False
-        assert skills_by_id["java"].can_appear_on_resume is True
-        assert skills_by_id["windows"].can_appear_on_resume is True
+        labels = SectionLabels()
+        assert labels.summary == "RESUMO PROFISSIONAL"
+        assert labels.experience == "EXPERIÊNCIA PROFISSIONAL"
+        assert labels.courses == "CURSOS E CERTIFICAÇÕES"
 
     def test_search_criteria_example_is_valid(self) -> None:
         raw = _load_example("search_criteria.example.json")
@@ -67,63 +69,99 @@ class TestPublicExampleFiles:
     def test_sources_example_is_valid(self) -> None:
         raw = _load_example("sources.example.json")
         sources = JobSourcesConfig.model_validate(raw)
-        assert len(sources.sources) == 2
+        assert len(sources.sources) >= 25
+        categories = {s.category for s in sources.sources}
+        assert {
+            "Grandes Portais",
+            "Tech & Remoto",
+            "Polo Tech Recife",
+            "Regionais de Pernambuco",
+        }.issubset(categories)
         assert all(s.respect_robots_txt is True for s in sources.sources)
+        assert all(bool(s.display_name) for s in sources.sources)
 
 
-class TestDomainVeracityInvariants:
-    def test_rejects_self_deprecating_labels_in_skill_display_name(self) -> None:
-        raw = _load_example("master_profile.example.json")
-        raw["skills"][0]["display_name"] = "Java básico"
-        with pytest.raises(ValidationError, match="Self-deprecating qualifier"):
-            MasterProfile.model_validate(raw)
+class TestUnifiedProfileFlexibilityAndMigration:
+    def test_allows_empty_optional_sections_and_deduplicates_skill_tags(self) -> None:
+        minimal = MasterProfile.model_validate(
+            {
+                "header": {"full_name": "Candidato Enxuto"},
+                "skills": [" Python ", "python", "SQL", "", "FastAPI"],
+            }
+        )
+        assert minimal.experiences == []
+        assert minimal.education == []
+        assert minimal.courses == []
+        assert minimal.projects == []
+        assert minimal.languages == []
+        assert minimal.skills == ["Python", "SQL", "FastAPI"]
 
-    @pytest.mark.parametrize(
-        "bad_phrase",
-        [
-            "Atuação com Office (básico) e planilhas.",
-            "Conhecimento em nível inicial de redes.",
-            "Possui apenas noções de atendimento.",
-            "Familiaridade básica com Linux corporativo.",
-            "Experience with SQL at basic level.",
-        ],
-    )
-    def test_rejects_self_deprecating_labels_in_bullets_and_summaries(
-        self, bad_phrase: str
-    ) -> None:
-        raw = _load_example("master_profile.example.json")
-        raw["experiences"][0]["bullets"][0]["text"] = bad_phrase
-        with pytest.raises(ValidationError, match="Self-deprecating qualifier"):
-            MasterProfile.model_validate(raw)
-
-    def test_rejects_preparable_gap_skill_in_resume_preset(self) -> None:
-        raw = _load_example("master_profile.example.json")
-        # 'glpi' has veracity == 'preparable_gap'
-        raw["area_presets"]["suporte"]["skill_groups"][0]["skill_ids"].append("glpi")
-        with pytest.raises(ValidationError, match="non-resume skill 'glpi'"):
-            MasterProfile.model_validate(raw)
-
-    def test_rejects_in_progress_free_course_in_preset(self) -> None:
-        raw = _load_example("master_profile.example.json")
-        raw["area_presets"]["dev"]["included_course_ids"].append("course_docker_in_progress")
-        with pytest.raises(ValidationError, match="non-completed course"):
-            MasterProfile.model_validate(raw)
-
-    def test_rejects_reserved_project_in_preset_or_summary_text(self) -> None:
-        raw_ref = _load_example("master_profile.example.json")
-        raw_a = copy.deepcopy(raw_ref)
-        raw_a["area_presets"]["dev"]["included_project_ids"].append("proj_atlas_reserved")
-        with pytest.raises(ValidationError, match="unapproved/reserved project"):
-            MasterProfile.model_validate(raw_a)
-
-        raw_b = copy.deepcopy(raw_ref)
-        raw_b["area_presets"]["dev"]["default_summary"] += " Criadora do projeto AtlasFlow Sandbox."
-        with pytest.raises(ValidationError, match="forbidden term 'AtlasFlow Sandbox'"):
-            MasterProfile.model_validate(raw_b)
+    def test_v1_to_v2_migration_consolidates_bullets_and_filters_gaps(self) -> None:
+        legacy_v1 = {
+            "schema_version": "1.0",
+            "header": {
+                "full_name": "Marina Alves Costa",
+                "city": "Belo Horizonte",
+                "state": "MG",
+                "email": "marina@example.com",
+                "phone": "(31) 90000-0000",
+                "links": [{"label": "GitHub", "url": "https://github.com/marina-demo"}],
+            },
+            "education": [
+                {
+                    "id": "edu_1",
+                    "degree": "Sistemas para Internet",
+                    "institution": "UEEX",
+                    "program_note": "Trilhas Digitais",
+                    "period_label": "2026 - 2028",
+                    "status": "in_progress",
+                }
+            ],
+            "experiences": [
+                {
+                    "id": "exp_1",
+                    "role": "Suporte Técnico",
+                    "company": "Horizonte Tech",
+                    "employment_type_label": "CLT",
+                    "period_label": "2024",
+                    "bullets": [
+                        {"id": "b1", "text": "Atendimento presencial e remoto em Help Desk com AnyDesk."},
+                        {"id": "b2", "text": "Administração de contas no Active Directory e e-mail."},
+                    ],
+                }
+            ],
+            "courses": [
+                {"id": "c1", "title": "Agentes IA", "institution": "IDA", "details_label": "40h", "status": "completed"},
+                {"id": "c2", "title": "Curso Livre Incompleto", "institution": "Web", "details_label": "10h", "status": "in_progress_free"},
+            ],
+            "projects": [
+                {"id": "p1", "name": "Confidencial Interno", "status": "reserved"},
+            ],
+            "skills": [
+                {"id": "win", "display_name": "Windows", "veracity": "confirmed_practice"},
+                {"id": "py", "display_name": "Python", "veracity": "academic_foundation"},
+                {"id": "glpi", "display_name": "GLPI", "veracity": "preparable_gap"},
+                {"id": "k8s", "display_name": "Kubernetes", "veracity": "unconfirmed"},
+            ],
+            "languages": [{"id": "l1", "language": "Português", "proficiency": "Nativo"}],
+            "area_presets": {
+                "generalista": {"default_summary": "Resumo geral consolidado para migração."}
+            },
+        }
+        migrated = convert_v1_dict_to_v2(legacy_v1)
+        assert migrated.schema_version == "2.1"
+        assert migrated.summary == "Resumo geral consolidado para migração."
+        assert "Help Desk" in migrated.experiences[0].description
+        assert "Active Directory" in migrated.experiences[0].description
+        assert len(migrated.courses) == 1
+        assert migrated.courses[0].workload == "40h"
+        assert migrated.projects == []
+        assert migrated.skills == ["Windows", "Python"]
 
     def test_rejects_non_https_urls_and_invalid_cnpj_or_schedule(self) -> None:
         sources_raw = _load_example("sources.example.json")
-        sources_raw["sources"][1]["feeds"] = ["http://insecure.example.com/feed"]
+        rss_entry = next(s for s in sources_raw["sources"] if s["type"] == "rss_local")
+        rss_entry["feeds"] = ["http://insecure.example.com/feed"]
         with pytest.raises(ValidationError, match="https://"):
             JobSourcesConfig.model_validate(sources_raw)
 
@@ -147,7 +185,6 @@ class TestPrivacyScannerAndGitHook:
             staged_only=False,
         )
         assert scanned_count > 0
-        # Legacy archive is present locally, so dynamic secrets must be loaded in memory
         assert secret_count >= 3
         assert violations == []
 
@@ -212,7 +249,6 @@ class TestPrivacyScannerAndGitHook:
         assert "PRIVATE_RESERVED_PROJECT" in categories
         assert "FORBIDDEN_BINARY_OR_DOC" in categories
 
-        # Ensure redacted detail never echoes the actual secret string
         for v in violations:
             assert "Confidencial Sistemas Ltda" not in v.detail
             assert synth_email not in v.detail
@@ -225,7 +261,6 @@ class TestPrivacyScannerAndGitHook:
         (temp_repo / "scripts").mkdir(parents=True)
         (temp_repo / "user_data" / "config").mkdir(parents=True)
 
-        # Copy scanner script into isolated temporary Git repo
         shutil.copyfile(
             REPO_ROOT / "scripts" / "check_privacy.py",
             temp_repo / "scripts" / "check_privacy.py",
@@ -241,16 +276,8 @@ class TestPrivacyScannerAndGitHook:
         )
 
         subprocess.run(["git", "init"], cwd=temp_repo, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "dev@example.com"],
-            cwd=temp_repo,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Demo Dev"],
-            cwd=temp_repo,
-            check=True,
-        )
+        subprocess.run(["git", "config", "user.email", "dev@example.com"], cwd=temp_repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Demo Dev"], cwd=temp_repo, check=True)
 
         installed = install_pre_commit_hook(temp_repo)
         assert installed is True
@@ -258,14 +285,9 @@ class TestPrivacyScannerAndGitHook:
         hook_content = (temp_repo / ".git" / "hooks" / "pre-commit").read_text(encoding="utf-8")
         assert HOOK_MARKER in hook_content
 
-        # 1. Clean file commit must succeed
         clean_file = temp_repo / "README.md"
         clean_file.write_text("# Clean Public Repo\nContact: demo@example.com\n", encoding="utf-8")
-        subprocess.run(
-            ["git", "add", "README.md", "scripts/check_privacy.py"],
-            cwd=temp_repo,
-            check=True,
-        )
+        subprocess.run(["git", "add", "README.md", "scripts/check_privacy.py"], cwd=temp_repo, check=True)
         ok_commit = subprocess.run(
             ["git", "commit", "-m", "chore: initial clean commit"],
             cwd=temp_repo,
@@ -274,7 +296,6 @@ class TestPrivacyScannerAndGitHook:
         )
         assert ok_commit.returncode == 0, ok_commit.stderr
 
-        # 2. Commit staging a private blocked company or Gmail address must be rejected!
         dirty_file = temp_repo / "notes.txt"
         dirty_file.write_text("Never apply to Empresa Bloqueada Real\n", encoding="utf-8")
         subprocess.run(["git", "add", "notes.txt"], cwd=temp_repo, check=True)

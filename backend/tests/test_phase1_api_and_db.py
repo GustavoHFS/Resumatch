@@ -42,7 +42,7 @@ def _make_test_settings(tmp_data_dir: Path) -> AppSettings:
         data_dir=tmp_data_dir,
         examples_dir=EXAMPLES_DIR,
         scheduler_enabled=False,
-        llm_provider="none",
+        gemini_api_key="",
     )
 
 
@@ -91,9 +91,11 @@ class TestPhase1CoreApiAndWalDatabase:
             prof_res = await client.get("/api/profile")
             assert prof_res.status_code == 200
             profile = prof_res.json()
+            assert profile["schema_version"] == "2.1"
             assert profile["header"]["full_name"] == "Marina Alves Costa"
-            assert set(profile["area_presets"].keys()) == {"dev", "suporte", "suporte-en"}
-            assert profile["area_presets"]["suporte-en"]["locale"] == "en-US"
+            assert len(profile["experiences"]) == 1
+            assert "Help Desk" in profile["experiences"][0]["description"]
+            assert "Java" in profile["skills"]
 
             crit_res = await client.get("/api/config/criteria")
             assert crit_res.status_code == 200
@@ -103,7 +105,7 @@ class TestPhase1CoreApiAndWalDatabase:
 
             src_res = await client.get("/api/config/sources")
             assert src_res.status_code == 200
-            assert len(src_res.json()["sources"]) == 2
+            assert len(src_res.json()["sources"]) >= 25
 
     @pytest.mark.anyio
     async def test_profile_endpoint_returns_422_on_corrupted_schema(

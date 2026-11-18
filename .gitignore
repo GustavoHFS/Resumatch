@@ -63,8 +63,9 @@ build/
 htmlcov/
 
 # ==============================================================================
-# FRONTEND (NODE / VITE) & OS
+# FRONTEND (NODE / VITE), NATIVE LAUNCHER & OS
 # ==============================================================================
+/*.exe
 node_modules/
 **/node_modules/
 frontend/node_modules/

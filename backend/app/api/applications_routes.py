@@ -16,6 +16,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, or_, select
 
 from app.core.database import get_db_session
+from app.domain.labels_pt import STAGE_PT, build_job_human_labels, humanize_code
 from app.models import (
     ApplicationEvent,
     ApplicationTracking,
@@ -35,22 +36,17 @@ KanbanStage = Literal[
     "encerrada_ou_descartada",
 ]
 
+ALL_STAGES: set[str] = {
+    "descoberta",
+    "candidatura_a_preparar",
+    "curriculo_preparado",
+    "aguardando_envio_manual",
+    "enviada_manualmente",
+    "encerrada_ou_descartada",
+}
+
 ALLOWED_STAGE_TRANSITIONS: dict[str, set[str]] = {
-    "descoberta": {"candidatura_a_preparar", "curriculo_preparado", "encerrada_ou_descartada"},
-    "candidatura_a_preparar": {"curriculo_preparado", "encerrada_ou_descartada"},
-    "curriculo_preparado": {
-        "aguardando_envio_manual",
-        "enviada_manualmente",
-        "candidatura_a_preparar",
-        "encerrada_ou_descartada",
-    },
-    "aguardando_envio_manual": {
-        "enviada_manualmente",
-        "curriculo_preparado",
-        "encerrada_ou_descartada",
-    },
-    "enviada_manualmente": set(),
-    "encerrada_ou_descartada": {"candidatura_a_preparar"},
+    stage: ALL_STAGES - {stage} for stage in ALL_STAGES
 }
 
 
@@ -80,6 +76,17 @@ def _serialize_application_card(
         "opportunity_id": tracking.opportunity_id,
         "updated_at": tracking.updated_at,
         "stage": tracking.stage,
+        "stage_label": humanize_code(STAGE_PT, tracking.stage, "Descoberta"),
+        "labels": build_job_human_labels(
+            classification=opp.classification,
+            compatibility=tracking.professional_compatibility or opp.professional_compatibility,
+            operational_status=tracking.operational_status or opp.operational_status,
+            automation_capability=tracking.automation_capability or opp.automation_capability,
+            stage=tracking.stage,
+            workplace_mode=opp.workplace_mode,
+            career_tier=opp.career_tier,
+            service_tier=tracking.service_tier or opp.service_tier,
+        ),
         "queue_state": tracking.queue_state,
         "professional_compatibility": tracking.professional_compatibility or opp.professional_compatibility,
         "operational_status": tracking.operational_status or opp.operational_status,
@@ -268,16 +275,10 @@ def transition_application_stage(
                 detail=f"ResumeVersion '{effective_version_id}' does not exist.",
             )
 
-    if payload.stage in {"curriculo_preparado", "aguardando_envio_manual", "enviada_manualmente"} and version is None:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Stage '{payload.stage}' requires a valid linked resume_version_id.",
-        )
-
     if payload.stage == "enviada_manualmente" and not payload.confirm_manual_submission:
         raise HTTPException(
             status_code=422,
-            detail="Stage 'enviada_manualmente' requires explicit confirm_manual_submission=true.",
+            detail="Confirme o envio manual antes de marcar como enviada.",
         )
 
     now_iso = _utc_now()
@@ -337,3 +338,29 @@ def list_application_events(
         .order_by(col(ApplicationEvent.created_at).asc(), col(ApplicationEvent.id).asc())
     ).all()
     return [ev.model_dump(mode="json") for ev in events]
+
+
+@router.delete("/{opportunity_id}")
+def delete_application_tracking(
+    opportunity_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict[str, Any]:
+    tracking = session.get(ApplicationTracking, opportunity_id)
+    if tracking is None:
+        raise HTTPException(status_code=404, detail="Candidatura não encontrada.")
+
+    events = session.exec(
+        select(ApplicationEvent).where(ApplicationEvent.opportunity_id == opportunity_id)
+    ).all()
+    for ev in events:
+        session.delete(ev)
+
+    session.delete(tracking)
+
+    opp = session.get(JobOpportunity, opportunity_id)
+    if opp is not None:
+        opp.application_stage = "descoberta"
+        session.add(opp)
+
+    session.commit()
+    return {"status": "deleted", "opportunity_id": opportunity_id}

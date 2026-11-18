@@ -321,6 +321,8 @@ def collect_workspace_files(repo_root: Path) -> list[Path]:
         dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         for filename in files:
             rel_file = rel_dir / filename if rel_dir != Path(".") else Path(filename)
+            if rel_dir == Path(".") and filename.lower().endswith(".exe"):
+                continue
             collected.append(rel_file)
     gitkeep = Path("user_data/.gitkeep")
     if (repo_root / gitkeep).is_file():

@@ -1,5 +1,5 @@
-"""Phase 3 test suite: DeterministicResumeComposer (<20ms), HTML5/CSS A4 rendering,
-Playwright Headless Chromium lazy reuse + idle timeout, auto_fit page budget, and pypdf ATS QA.
+"""Phase 3 test suite: Editable `ResumeDraft` -> Offline HTML5/CSS A4 rendering (`pt-BR` & `en-US`),
+Playwright Headless Chromium lazy reuse + idle timeout, `auto_fit` page budget, and `pypdf` ATS QA.
 
 Strictly uses fictional fixtures from `examples/` and `httpx.ASGITransport` (zero background servers).
 """
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,13 +18,16 @@ from fastapi import FastAPI
 
 from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager
 from app.core.config import AppSettings
-from app.domain.resume_composer import DeterministicResumeComposer
-from app.domain.triage_engine import DeterministicTriageEngine, RawJobInput
 from app.main import create_app
 from app.models import (
-    BlockedCompaniesConfig,
+    DraftCourseItem,
+    DraftEducationItem,
+    DraftExperienceItem,
+    DraftLanguageItem,
+    DraftSkillGroup,
     MasterProfile,
-    SearchCriteria,
+    ResumeDraft,
+    build_draft_header_from_profile,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -37,17 +39,59 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _load_demo_domain() -> tuple[MasterProfile, SearchCriteria, BlockedCompaniesConfig]:
-    profile = MasterProfile.model_validate(
-        json.loads((EXAMPLES_DIR / "master_profile.example.json").read_text(encoding="utf-8"))
+def _build_sample_draft(
+    profile: MasterProfile,
+    max_pages: int = 1,
+) -> ResumeDraft:
+    return ResumeDraft(
+        target_role="Desenvolvedora Backend Java",
+        company="Minas Software",
+        max_pages=max_pages,
+        header=build_draft_header_from_profile(profile.header),
+        summary="Desenvolvedora focada em Java, Spring Boot, APIs REST e bancos relacionais SQL.",
+        experiences=[
+            DraftExperienceItem(
+                id="exp_1",
+                role="Técnica de Suporte de TI",
+                company="Horizonte Tech Solutions",
+                period="2024",
+                location="Belo Horizonte, MG",
+                highlights=[
+                    "Atendimento Help Desk presencial e remoto com triagem de chamados.",
+                    "Administração de usuários e permissões no Active Directory.",
+                ],
+            )
+        ],
+        education=[
+            DraftEducationItem(
+                id="edu_1",
+                degree=profile.education[0].degree,
+                institution=profile.education[0].institution,
+                period=profile.education[0].period,
+                details=profile.education[0].details,
+            )
+        ],
+        courses=[
+            DraftCourseItem(
+                id="crs_1",
+                title=profile.courses[0].title,
+                institution=profile.courses[0].institution,
+                workload=profile.courses[0].workload,
+                completion_date=profile.courses[0].completion_date,
+                description=profile.courses[0].description,
+            )
+        ],
+        skill_groups=[
+            DraftSkillGroup(
+                id="sk_1",
+                label="Desenvolvimento Backend",
+                items=["Java", "Spring Boot", "APIs REST", "SQL"],
+            )
+        ],
+        languages=[
+            DraftLanguageItem(id="l1", language="Português", proficiency="Nativo")
+        ],
     )
-    criteria = SearchCriteria.model_validate(
-        json.loads((EXAMPLES_DIR / "search_criteria.example.json").read_text(encoding="utf-8"))
-    )
-    blocked = BlockedCompaniesConfig.model_validate(
-        json.loads((EXAMPLES_DIR / "blocked_companies.example.json").read_text(encoding="utf-8"))
-    )
-    return profile, criteria, blocked
 
 
 @asynccontextmanager
@@ -60,80 +104,14 @@ async def _asgi_client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
             yield client
 
 
-class TestDeterministicResumeComposer:
-    def test_composes_in_under_20ms_with_provenance_equivalences_and_veracity_guards(self) -> None:
-        profile, criteria, blocked = _load_demo_domain()
-        triage_engine = DeterministicTriageEngine(criteria, blocked, profile)
-        composer = DeterministicResumeComposer(profile)
-
-        job_desc = (
-            "Estágio remunerado em Suporte Técnico - Belo Horizonte, 08h às 14h.\n"
-            "Requisitos:\n"
-            "- Atendimento Help Desk, Windows e Active Directory.\n"
-            "- Configuração de correio eletrônico e cabeamento estruturado.\n"
-            "- Conhecimento em GLPI e Docker.\n"
-        )
-        triage = triage_engine.evaluate(
-            RawJobInput(
-                title="Estágio em Suporte Técnico",
-                company="Horizonte Clínicas",
-                url="https://jobs.example.com/suporte-bh",
-                location="Belo Horizonte, MG",
-                workplace_mode="presencial",
-                description=job_desc,
-            )
-        )
-
-        t0 = time.perf_counter()
-        payload = composer.compose(
-            "suporte",
-            triage=triage,
-            job_description=job_desc,
-            section_order_override=["summary", "experience", "education", "skills", "languages"],
-        )
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-
-        assert elapsed_ms < 20.0
-        assert payload.section_order == ["summary", "experience", "education", "skills", "languages"]
-        # Contextual equivalences applied & recorded
-        eq_to_terms = {eq.to_term for eq in payload.applied_equivalences}
-        assert "correio eletrônico" in eq_to_terms
-        assert "cabeamento estruturado" in eq_to_terms
-
-        # Every bullet and skill group preserves factual_source
-        assert all(b.factual_source for b in payload.experiences[0].bullets)
-        assert all(g.factual_source for g in payload.skill_groups)
-
-        # Strict blocks: in_progress_free course, reserved project, GLPI, Docker never appear!
-        serialized = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False)
-        assert "GLPI" not in serialized
-        assert "Docker" not in serialized
-        assert "AtlasFlow Sandbox" not in serialized
-        assert "Containers e DevOps" not in serialized
-
-    def test_composes_english_preset_without_age_and_with_english_labels(self) -> None:
-        profile, _, _ = _load_demo_domain()
-        composer = DeterministicResumeComposer(profile)
-        payload = composer.compose("suporte-en")
-
-        assert payload.locale == "en-US"
-        assert "21" not in payload.header.location_line
-        assert "Brazil" in payload.header.location_line
-        assert payload.section_labels.summary == "PROFESSIONAL SUMMARY"
-        assert payload.languages[0].language == "English"
-        assert payload.languages[0].proficiency == "Advanced"
-
-
-class TestPlaywrightPdfLifecycleAutoFitAndRestEndpoints:
+class TestPlaywrightPdfLifecycleAutoFitAndDraftExport:
     @pytest.mark.anyio
     async def test_browser_lazy_reuse_offline_guard_and_idle_timeout_autoclose(self) -> None:
         manager = ChromiumPdfBrowserManager(idle_timeout_seconds=0.3)
         try:
-            # 1. Lazy: browser must NOT be running before first render
             assert manager.is_browser_running is False
             assert manager.launch_count == 0
 
-            # 2. Render #1 (includes blocked external image URL to verify offline route guard)
             html_with_external = (
                 "<!DOCTYPE html><html><body>"
                 "<h1>Offline Render Check</h1>"
@@ -146,13 +124,13 @@ class TestPlaywrightPdfLifecycleAutoFitAndRestEndpoints:
             assert manager.launch_count == 1
             assert manager.render_count == 1
 
-            # 3. Render #2 immediately reuses the SAME warm Chromium instance
-            pdf_2 = await manager.render_html_to_pdf("<!DOCTYPE html><html><body><p>Fast warm render</p></body></html>")
+            pdf_2 = await manager.render_html_to_pdf(
+                "<!DOCTYPE html><html><body><p>Fast warm render</p></body></html>"
+            )
             assert pdf_2.startswith(b"%PDF-")
             assert manager.launch_count == 1
             assert manager.render_count == 2
 
-            # 4. Wait past idle_timeout_seconds=0.3 -> watchdog closes Chromium automatically!
             await asyncio.sleep(0.55)
             assert manager.is_browser_running is False
             assert manager.idle_close_count == 1
@@ -160,39 +138,69 @@ class TestPlaywrightPdfLifecycleAutoFitAndRestEndpoints:
             await manager.aclose()
 
     @pytest.mark.anyio
-    async def test_rest_compose_render_html_export_pdf_and_autofit_overflow(
+    async def test_render_html_export_pdf_and_autofit_budget_from_resume_draft(
         self, tmp_path: Path
     ) -> None:
-        workspace = tmp_path / "phase3_ws"
+        workspace = tmp_path / "phase3_v2_ws"
         settings = AppSettings(
             data_dir=workspace,
             examples_dir=EXAMPLES_DIR,
             scheduler_enabled=False,
             pdf_browser_idle_timeout_seconds=30,
         )
+        profile = MasterProfile.model_validate(
+            json.loads((EXAMPLES_DIR / "master_profile.example.json").read_text(encoding="utf-8"))
+        )
         app = create_app(settings=settings)
 
         async with _asgi_client(app) as client:
-            # Browser remains lazy until /export-pdf is called
             assert app.state.pdf_browser_manager.launch_count == 0
 
-            # 1. Compose endpoint (< 20ms)
-            comp_res = await client.post("/api/resumes/compose", json={"area_id": "dev"})
-            assert comp_res.status_code == 200
-            assert comp_res.json()["elapsed_ms"] < 50.0
-
-            # 2. Render HTML preview endpoint (offline embedded @font-face WOFF2, zero external font links)
+            # 1. Render HTML preview in Portuguese-BR (lightweight static font URL in standalone_preview=True)
+            pt_draft = _build_sample_draft(profile)
             html_res = await client.post(
                 "/api/resumes/render-html",
-                json={"area_id": "suporte-en", "standalone_preview": True},
+                json={"draft": pt_draft.model_dump(mode="json"), "standalone_preview": True},
             )
             assert html_res.status_code == 200
             html_str = html_res.json()["html"]
-            assert "data:font/woff2;base64," in html_str
+            assert '<html lang="pt-BR">' in html_str
+            assert "/api/resumes/fonts/LibreFranklin-Regular.woff2" in html_str
+            assert len(html_str) < 15_000
             assert "fonts.googleapis.com" not in html_str
-            assert "PROFESSIONAL SUMMARY" in html_str
+            assert 'id="resume-flow"' in html_str
+            assert "Desenvolvedora Backend Java" in html_str
+            assert 'href="mailto:marina.costa@example.com"' in html_str
+            assert "RESUMO PROFISSIONAL" in html_str
+            assert "CURSOS E CERTIFICAÇÕES" in html_str
 
-            # 3. Import a compatible job and export its tailored A4 PDF
+            # Offline PDF mode (standalone_preview=False) embeds Base64 WOFF2 directly
+            offline_html = (
+                await client.post(
+                    "/api/resumes/render-html",
+                    json={"draft": pt_draft.model_dump(mode="json"), "standalone_preview": False},
+                )
+            ).json()["html"]
+            assert "data:font/woff2;base64," in offline_html
+
+            # Static font endpoint serves embedded WOFF2 and blocks unknown filenames
+            font_ok = await client.get("/api/resumes/fonts/Inter-Regular.woff2")
+            assert font_ok.status_code == 200
+            assert font_ok.headers["content-type"] == "font/woff2"
+            assert font_ok.content[:4] == b"wOF2"
+            assert (await client.get("/api/resumes/fonts/unknown.woff2")).status_code == 404
+
+            # Verify font_family selector updates rendered CSS stack cleanly
+            georgia_draft = pt_draft.model_copy(update={"font_family": "Georgia"})
+            georgia_html = (
+                await client.post(
+                    "/api/resumes/render-html",
+                    json={"draft": georgia_draft.model_dump(mode="json"), "standalone_preview": True},
+                )
+            ).json()["html"]
+            assert "--resume-font-family: Georgia," in georgia_html
+
+            # 2. Import a compatible job and export its tailored A4 PDF from ResumeDraft
             imp_res = await client.post(
                 "/api/jobs/import",
                 json={
@@ -211,82 +219,138 @@ class TestPlaywrightPdfLifecycleAutoFitAndRestEndpoints:
 
             exp_res = await client.post(
                 "/api/resumes/export-pdf",
-                json={"area_id": "dev", "opportunity_id": opp_id},
+                json={
+                    "draft": pt_draft.model_dump(mode="json"),
+                    "opportunity_id": opp_id,
+                    "auto_fit": True,
+                },
             )
             assert exp_res.status_code == 200, exp_res.text
             exp_body = exp_res.json()
             ats = exp_body["ats_validation"]
             assert ats["passed"] is True
             assert ats["page_count"] == 1
+            assert ats["zero_corrupted_ligatures"] is True
             assert ats["clickable_links_valid"] is True
-            assert len(ats["clickable_uris"]) == 2
-            assert (workspace / exp_body["export_rel_path"]).is_file()
+            assert len(ats["clickable_uris"]) == 3
+            assert "mailto:marina.costa@example.com" in ats["clickable_uris"]
+            assert exp_body["output_pdf_filename"] == "Marina_Costa_Desenvolvedora_Backend_Java.pdf"
+            pdf_1_path = workspace / exp_body["export_rel_path"]
+            assert pdf_1_path.is_file()
 
-            # Verify job stage transitioned to 'curriculo_preparado' and version is listed
+            # Exporting same role for another company creates a distinct immutable PDF file
+            exp_res_2 = await client.post(
+                "/api/resumes/export-pdf",
+                json={
+                    "draft": pt_draft.model_copy(update={"company": "Outra Empresa Tech"}).model_dump(mode="json"),
+                    "auto_fit": True,
+                },
+            )
+            assert exp_res_2.status_code == 200, exp_res_2.text
+            exp_body_2 = exp_res_2.json()
+            assert exp_body_2["export_rel_path"] != exp_body["export_rel_path"]
+            assert pdf_1_path.is_file()
+            assert (workspace / exp_body_2["export_rel_path"]).is_file()
+
             job_detail = (await client.get(f"/api/jobs/{opp_id}")).json()
             assert job_detail["opportunity"]["application_stage"] == "curriculo_preparado"
+            assert job_detail["opportunity"]["labels"]["stage_label"] == "Currículo pronto"
             assert job_detail["tracking"]["resume_version_id"] == exp_body["version_id"]
 
-            versions = (await client.get("/api/resumes/versions")).json()
-            assert len(versions) == 1
-            assert versions[0]["id"] == exp_body["version_id"]
-
-            # 4. Auto-Fit Page Overflow Test: inject verbose bullets (<=400 chars) + groups that spill past 1 page A4
-            prof_raw = json.loads(settings.profile_path.read_text(encoding="utf-8"))
-            prof_raw["area_presets"]["suporte"]["default_summary"] = (
-                "Profissional de TI com sólida atuação prática em suporte técnico presencial e remoto, "
-                "administração de contas no Active Directory, gestão estruturada de chamados em Help Desk, "
-                "manutenção preventiva e corretiva de estações Windows, configuração de redes corporativas, "
-                "atendimento direto a clientes internos e externos, documentação de incidentes e organização "
-                "de cotações técnicas em planilhas operacionais."
+            # 3. Auto-Fit Page Overflow Test on verbose 1-page draft
+            verbose_draft = pt_draft.model_copy(
+                update={
+                    "summary": pt_draft.summary * 4,
+                    "experiences": [
+                        pt_draft.experiences[0].model_copy(
+                            update={
+                                "highlights": [
+                                    f"Entrega técnica detalhada #{i}: administração corporativa Windows, redes TCP/IP, atendimento estruturado de chamados e automação de rotinas."
+                                    for i in range(1, 10)
+                                ]
+                            }
+                        )
+                    ],
+                    "courses": [
+                        DraftCourseItem(
+                            id=f"c_{i}",
+                            title=f"Formação Técnica Intensiva {i}",
+                            institution="Instituto Aberto",
+                            workload="60 horas",
+                            completion_date="2026",
+                            description="Aprofundamento prático em arquitetura backend e bancos relacionais.",
+                        )
+                        for i in range(1, 7)
+                    ],
+                }
             )
-            long_clause = (
-                "Atuação detalhada em suporte corporativo, administração de estações Windows, "
-                "redes TCP/IP, atendimento estruturado de chamados, documentação operacional, "
-                "manutenção preventiva de equipamentos, impressoras corporativas e rotinas de backup diário."
-            )
-            extra_ids = []
-            for idx in range(1, 9):
-                bid = f"bul_overflow_{idx}"
-                extra_ids.append(bid)
-                prof_raw["experiences"][0]["bullets"].append(
-                    {
-                        "id": bid,
-                        "text": f"Atividade operacional {idx}: {long_clause}",
-                        "areas": ["suporte"],
-                        "skill_tags": ["windows"],
-                        "keywords": ["windows"],
-                        "factual_source": "Overflow test fixture",
-                        "translations": {},
-                    }
-                )
-            for g_idx in range(1, 5):
-                prof_raw["area_presets"]["suporte"]["skill_groups"].append(
-                    {
-                        "id": f"grp_extra_{g_idx}",
-                        "label": f"Domínio Complementar {g_idx}",
-                        "items_text": (
-                            "Administração de ambientes Windows corporativos, redes cabeadas e Wi-Fi, "
-                            "diagnóstico estruturado de conectividade DNS/DHCP, suporte remoto e documentação."
-                        ),
-                        "skill_ids": ["windows", "redes"],
-                        "factual_source": "Overflow test fixture",
-                    }
-                )
-            prof_raw["area_presets"]["suporte"]["max_bullets_per_experience"] = 8
-            prof_raw["area_presets"]["suporte"]["preferred_bullet_ids"] = extra_ids
-            settings.profile_path.write_text(
-                json.dumps(prof_raw, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-
             autofit_res = await client.post(
                 "/api/resumes/export-pdf",
-                json={"area_id": "suporte", "auto_fit": True},
+                json={"draft": verbose_draft.model_dump(mode="json"), "auto_fit": True},
             )
             assert autofit_res.status_code == 200, autofit_res.text
             af_body = autofit_res.json()
             assert af_body["ats_validation"]["passed"] is True
             assert af_body["ats_validation"]["page_count"] == 1
-            assert len(af_body["payload"]["auto_fit_adjustments"]) >= 1
-            # Same Chromium instance was reused across both /export-pdf calls!
+            assert af_body["draft"]["compact_mode"] is True
             assert app.state.pdf_browser_manager.launch_count == 1
+
+    @pytest.mark.anyio
+    async def test_all_five_selector_fonts_export_clean_pdf_with_zero_ligatures(
+        self, tmp_path: Path
+    ) -> None:
+        import io
+        import re
+        from pypdf import PdfReader
+
+        workspace = tmp_path / "phase3_5fonts_ws"
+        settings = AppSettings(
+            data_dir=workspace,
+            examples_dir=EXAMPLES_DIR,
+            scheduler_enabled=False,
+            pdf_browser_idle_timeout_seconds=30,
+        )
+        profile = MasterProfile.model_validate(
+            json.loads((EXAMPLES_DIR / "master_profile.example.json").read_text(encoding="utf-8"))
+        )
+        ligature_draft = _build_sample_draft(profile).model_copy(
+            update={
+                "summary": (
+                    "Profissional com perfil eficiente, fluxo contínuo, configuração, "
+                    "identificação de incidentes, certificações técnicas e currículo focado em Java."
+                )
+            }
+        )
+        corrupted_re = re.compile(r"[\ufb00-\ufb06\u0131]")
+        app = create_app(settings=settings)
+
+        async with _asgi_client(app) as client:
+            for family in [
+                "Libre Franklin",
+                "Inter",
+                "Arial",
+                "Georgia",
+                "Times New Roman",
+                "Merriweather",  # legacy alias migrated automatically to Times New Roman
+            ]:
+                payload_draft = ligature_draft.model_dump(mode="json")
+                payload_draft["font_family"] = family
+                res = await client.post(
+                    "/api/resumes/export-pdf",
+                    json={"draft": payload_draft, "auto_fit": True},
+                )
+                assert res.status_code == 200, f"Font '{family}' failed: {res.text}"
+                body = res.json()
+                assert body["ats_validation"]["passed"] is True
+                assert body["ats_validation"]["zero_corrupted_ligatures"] is True
+                assert body["ats_validation"]["corrupted_glyphs"] == []
+
+                pdf_bytes = (workspace / body["export_rel_path"]).read_bytes()
+                extracted = "\n".join(
+                    (p.extract_text() or "") for p in PdfReader(io.BytesIO(pdf_bytes)).pages
+                )
+                assert not corrupted_re.search(extracted), f"Corrupted glyph in '{family}'"
+                assert "eficiente" in extracted
+                assert "fluxo" in extracted
+                assert "identificação" in extracted
+                assert "Desenvolvedora Backend Java" in extracted

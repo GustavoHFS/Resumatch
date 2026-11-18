@@ -5,7 +5,6 @@ from __future__ import annotations
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,7 +42,7 @@ class AppSettings(BaseSettings):
     )
 
     project_name: str = "Resumatch"
-    version: str = "0.1.0"
+    version: str = "2.2.0"
     data_dir: Path = Field(default=REPO_ROOT / "user_data")
     examples_dir: Path = Field(default=REPO_ROOT / "examples")
     frontend_dist_dir: Path = Field(default=REPO_ROOT / "frontend" / "dist")
@@ -56,15 +55,15 @@ class AppSettings(BaseSettings):
     scheduler_default_interval_minutes: int = 360
     pdf_browser_idle_timeout_seconds: int = 120
 
-    llm_provider: Literal["none", "gemini", "groq", "ollama"] = "none"
-    llm_timeout_seconds: float = 15.0
+    llm_timeout_seconds: float = 25.0
     max_config_backups: int = 10
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    groq_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "llama3.2"
+    gemini_fallback_model: str = "gemini-2.0-flash"
+
+    @property
+    def ai_connected(self) -> bool:
+        return bool(self.gemini_api_key.strip())
 
     @property
     def safe_data_dir(self) -> Path:
@@ -93,6 +92,10 @@ class AppSettings(BaseSettings):
     @property
     def llm_settings_path(self) -> Path:
         return assert_safe_path(self.safe_data_dir / "config" / "llm_settings.json")
+
+    @property
+    def scheduler_config_path(self) -> Path:
+        return assert_safe_path(self.safe_data_dir / "config" / "scheduler.json")
 
     @property
     def exports_dir(self) -> Path:

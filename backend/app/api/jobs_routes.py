@@ -13,7 +13,11 @@ from sqlmodel import Session, col, or_, select
 from app.api.routes import get_app_settings
 from app.connectors.http_client import ConnectorError
 from app.core.config import AppSettings
+from datetime import datetime, timedelta, timezone
+
 from app.core.database import get_db_session
+from app.domain.date_utils import format_published_ago_pt, to_canonical_utc_iso
+from app.domain.labels_pt import build_job_human_labels
 from app.domain.triage_engine import DeterministicTriageEngine, RawJobInput, TriageResult
 from app.models import (
     ApplicationTracking,
@@ -23,6 +27,7 @@ from app.models import (
     JobSourcesConfig,
 )
 from app.models.profile_schema import StrictModel
+from app.services.config_service import atomic_write_validated_json
 from app.services.discovery_service import (
     AssistedJobImportRequest,
     execute_discovery_run,
@@ -35,7 +40,7 @@ router = APIRouter(prefix="/api", tags=["discovery-and-triage"])
 
 
 class DiscoveryRunRequest(StrictModel):
-    max_requests_budget: int = Field(default=40, ge=1, le=150)
+    max_requests_budget: int = Field(default=140, ge=1, le=300)
     source_ids: list[str] | None = None
 
 
@@ -61,6 +66,7 @@ def list_jobs(
     stage: str | None = None,
     service_tier: int | None = Query(default=None, ge=1, le=3),
     method: str | None = None,
+    recency: str | None = None,
     search: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -79,6 +85,19 @@ def list_jobs(
         filters.append(JobOpportunity.service_tier == service_tier)
     if method:
         filters.append(JobOpportunity.application_method == method)
+    if recency in {"24h", "7d", "14d"}:
+        now_utc = datetime.now(timezone.utc)
+        delta = (
+            timedelta(hours=24)
+            if recency == "24h"
+            else timedelta(days=7, hours=12)
+            if recency == "7d"
+            else timedelta(days=14, hours=12)
+        )
+        cutoff_iso = to_canonical_utc_iso(now_utc - delta)
+        filters.append(
+            func.coalesce(JobOpportunity.published_at, JobOpportunity.discovered_at) >= cutoff_iso
+        )
     if search:
         like_expr = f"%{search.strip()}%"
         filters.append(
@@ -99,8 +118,9 @@ def list_jobs(
         query = query.where(*filters)
     query = (
         query.order_by(
-            col(JobOpportunity.practical_priority).desc(),
-            col(JobOpportunity.last_seen_at).desc(),
+            col(JobOpportunity.published_at).is_(None).asc(),
+            col(JobOpportunity.published_at).desc(),
+            col(JobOpportunity.discovered_at).desc(),
         )
         .offset(offset)
         .limit(limit)
@@ -132,7 +152,18 @@ def list_jobs(
             "service_tier": r.service_tier,
             "application_stage": r.application_stage,
             "published_at": r.published_at,
+            "published_ago": format_published_ago_pt(r.published_at),
             "last_seen_at": r.last_seen_at,
+            "labels": build_job_human_labels(
+                classification=r.classification,
+                compatibility=r.professional_compatibility,
+                operational_status=r.operational_status,
+                automation_capability=r.automation_capability,
+                stage=r.application_stage,
+                workplace_mode=r.workplace_mode,
+                career_tier=r.career_tier,
+                service_tier=r.service_tier,
+            ),
         }
         for r in rows
     ]
@@ -155,8 +186,21 @@ def get_job_detail(
         .order_by(col(JobObservation.observed_at).desc())
     ).all()
 
+    opp_dict = opp.model_dump(mode="json")
+    opp_dict["published_ago"] = format_published_ago_pt(opp.published_at)
+    opp_dict["labels"] = build_job_human_labels(
+        classification=opp.classification,
+        compatibility=opp.professional_compatibility,
+        operational_status=opp.operational_status,
+        automation_capability=opp.automation_capability,
+        stage=opp.application_stage,
+        workplace_mode=opp.workplace_mode,
+        career_tier=opp.career_tier,
+        service_tier=opp.service_tier,
+    )
+
     return {
-        "opportunity": opp.model_dump(mode="json"),
+        "opportunity": opp_dict,
         "requirements": json.loads(opp.requirements_json or "[]"),
         "analysis": json.loads(opp.analysis_json or "{}"),
         "tracking": tracking.model_dump(mode="json") if tracking else None,
@@ -198,6 +242,7 @@ async def trigger_discovery_run(
         raise HTTPException(status_code=409, detail="A discovery run is already in progress.")
 
     mock_transport = getattr(request.app.state, "http_transport", None)
+    llm_transport = getattr(request.app.state, "llm_transport", None)
     rate_limit = 0.0 if mock_transport is not None else 0.35
 
     async with scheduler.run_lock:
@@ -207,6 +252,7 @@ async def trigger_discovery_run(
             max_requests_budget=req.max_requests_budget,
             source_ids=req.source_ids,
             transport=mock_transport,
+            llm_transport=llm_transport,
             default_rate_limit_seconds=rate_limit,
         )
         scheduler.last_run_summary = summary
@@ -263,11 +309,13 @@ def toggle_source(
         raise HTTPException(status_code=404, detail=f"Source '{source_id}' not found.")
 
     validated = JobSourcesConfig.model_validate(raw)
-    settings.sources_path.write_text(
-        json.dumps(validated.model_dump(mode="json"), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    backup_name = atomic_write_validated_json(
+        target_path=settings.sources_path,
+        validated_model=validated,
+        backups_dir=settings.backups_dir,
+        max_backups=settings.max_config_backups,
     )
-    return {"id": source_id, "enabled": payload.enabled}
+    return {"id": source_id, "enabled": payload.enabled, "backup_snapshot": backup_name}
 
 
 @router.get("/scheduler")

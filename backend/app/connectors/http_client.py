@@ -1,41 +1,55 @@
 """Safe async HTTP client and Lexbor HTML/JSON-LD parser (`httpx` + `truststore` + `selectolax`).
 
 Security & politeness guarantees:
-- Strict `https://` and host allowlist enforcement (no credentials, no custom ports).
+- Strict `https://` and host allowlist enforcement (no credentials, no custom ports, no private IPs).
+- Safe redirect following (up to 3 hops on 301/302/303/307/308) resolving relative/absolute URLs,
+  accepting legitimate `www.` / official domain migrations, and blocking redirects to login/SSO walls.
 - In-memory `robots.txt` cache per host with `Crawl-delay` support.
-- Per-domain async rate-limiting and hard per-run request budget (`max_requests_budget`).
-- Immediate clean abort (`AccessRestrictedError`) on HTTP 401/403/429, unexpected redirects,
-  or anti-bot/CAPTCHA challenge signatures — never bypassing controls.
+- Per-domain async locks + rate-limiting safe under concurrent `asyncio.Semaphore` execution.
+- Immediate clean abort (`AccessRestrictedError`) on HTTP 401/403/429, HTTP 202 bot gates,
+  auth redirects, or anti-bot/CAPTCHA challenge signatures — never bypassing controls.
 - Read-only JSON-RPC POST strictly restricted to the public `buscar_vagas` MCP tool.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import re
 import ssl
 import time
 from html import unescape
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
 import truststore
 from selectolax.lexbor import LexborHTMLParser
 
-USER_AGENT = "ResumatchLocal/0.1 (public read-only job discovery)"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) ResumatchLocal/2.2 Safari/537.36"
+)
 
 CAPTCHA_SIGNATURES = re.compile(
-    r"cf-chl-|cf-turnstile|verify you are human|captcha challenge|g-recaptcha|hcaptcha",
+    r"cf-chl-|cf-turnstile|verify you are human|captcha-delivery|g-recaptcha|hcaptcha|anomaly-modal",
     re.IGNORECASE,
 )
 
 SENSITIVE_QUERY_KEYS = re.compile(
-    r"token|password|senha|secret|authorization|credential|api[_-]?key",
+    r"^(?:access_token|id_token|refresh_token|auth_token|password|senha|secret|authorization|credential|api[_-]?key)$",
     re.IGNORECASE,
 )
+
+AUTH_REDIRECT_PATH_RE = re.compile(
+    r"(?:^|/)(?:login|signin|sign-in|auth|sso|oauth|entrar|autenticacao)(?:/|\?|$)",
+    re.IGNORECASE,
+)
+
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+MAX_REDIRECT_HOPS = 3
 
 BLOCK_TAGS = {"p", "div", "li", "br", "h1", "h2", "h3", "h4", "ul", "ol", "section", "article", "tr"}
 
@@ -56,11 +70,37 @@ class BudgetExhaustedError(ConnectorError):
     """Raised when a discovery run reaches its configured request budget."""
 
 
+def _is_ip_private_or_local(hostname: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(hostname)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+    except ValueError:
+        return hostname in {"localhost", "local"} or hostname.endswith(".internal")
+
+
+def _extract_brand_stem(host: str) -> str:
+    clean = host.lower().removeprefix("www.")
+    parts = [p for p in clean.split(".") if p not in {"com", "br", "org", "net", "io", "app", "co", "pt"}]
+    return parts[-1] if parts else clean
+
+
+def _is_legitimate_redirect_host(origin_host: str, target_host: str, allowed_hosts: set[str]) -> bool:
+    if target_host in allowed_hosts:
+        return True
+    if target_host.removeprefix("www.") == origin_host.removeprefix("www."):
+        return True
+    origin_stem = _extract_brand_stem(origin_host)
+    target_stem = _extract_brand_stem(target_host)
+    return bool(origin_stem and len(origin_stem) >= 4 and origin_stem == target_stem)
+
+
 def validate_public_https_url(url: str, allowed_hosts: set[str] | None = None) -> tuple[str, str]:
     parsed = urlsplit(url.strip())
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port or not parsed.hostname:
         raise ConnectorError(f"Invalid or non-HTTPS public URL rejected: {url}")
     host = parsed.hostname.lower()
+    if _is_ip_private_or_local(host):
+        raise ConnectorError(f"Private or local host rejected: {host}")
     if allowed_hosts is not None and host not in allowed_hosts:
         raise ConnectorError(f"Host '{host}' is not in the configured allowlist.")
     for key, _ in parse_qsl(parsed.query):
@@ -80,7 +120,6 @@ def html_to_clean_text(raw_html: str) -> str:
         for node in tree.css(tag):
             node.decompose()
 
-    # Insert newlines around block elements so Lexbor text extraction preserves paragraphs/lists
     for tag in BLOCK_TAGS:
         for node in tree.css(tag):
             if tag == "br":
@@ -124,45 +163,77 @@ def extract_json_ld_job_posting(raw_html: str) -> dict[str, Any] | None:
 
 
 class SafeAsyncHttpClient:
-    """Polite, read-only async HTTP client with OS truststore, robots.txt cache, and budget limits."""
+    """Polite, read-only async HTTP client with OS truststore, safe 3-hop redirects, and per-host locks."""
 
     def __init__(
         self,
         allowed_hosts: set[str],
-        max_requests_budget: int = 60,
+        max_requests_budget: int = 120,
         default_rate_limit_seconds: float = 0.35,
         max_response_bytes: int = 8_000_000,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.allowed_hosts = {h.lower() for h in allowed_hosts} | {
             "boards-api.greenhouse.io",
+            "job-boards.greenhouse.io",
             "api.lever.co",
+            "jobs.lever.co",
             "www.empregare.com",
+            "portal.gupy.io",
+            "portal.api.gupy.io",
+            "api.github.com",
+            "github.com",
+            "api.inhire.app",
+            "apply.workable.com",
+            "api.ashbyhq.com",
+            "api.remotar.com.br",
+            "remotar.com.br",
+            "trampos.co",
+            "jobs.jobvite.com",
+            "br.talent.com",
+            "www.vagas.com.br",
+            "vagas.com.br",
+            "www.catho.com.br",
+            "catho.com.br",
+            "www.infojobs.com.br",
+            "infojobs.com.br",
+            "divulgavagas.com.br",
+            "www.divulgavagas.com.br",
+            "www.geekhunter.com",
+            "geekhunter.com",
+            "html.duckduckgo.com",
+            "www.bing.com",
         }
         self.max_requests_budget = max_requests_budget
         self.default_rate_limit_seconds = default_rate_limit_seconds
         self.max_response_bytes = max_response_bytes
         self.requests_made = 0
         self._robots_cache: dict[str, RobotFileParser] = {}
+        self._robots_locks: dict[str, asyncio.Lock] = {}
+        self._host_locks: dict[str, asyncio.Lock] = {}
         self._domain_delays: dict[str, float] = {}
         self._last_request_at: dict[str, float] = {}
-        self._response_cache: dict[tuple[str, str], Any] = {}
+        self._response_cache: dict[tuple[str, str, str], Any] = {}
 
+        default_headers = {
+            "User-Agent": USER_AGENT,
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+        }
         self._is_mock_transport = transport is not None
         if transport is not None:
             self._client = httpx.AsyncClient(
                 transport=transport,
                 follow_redirects=False,
-                timeout=httpx.Timeout(20.0),
-                headers={"User-Agent": USER_AGENT},
+                timeout=httpx.Timeout(8.0),
+                headers=default_headers,
             )
         else:
             ssl_ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             self._client = httpx.AsyncClient(
                 verify=ssl_ctx,
                 follow_redirects=False,
-                timeout=httpx.Timeout(20.0),
-                headers={"User-Agent": USER_AGENT},
+                timeout=httpx.Timeout(8.0),
+                headers=default_headers,
             )
 
     async def aclose(self) -> None:
@@ -173,6 +244,20 @@ class SafeAsyncHttpClient:
 
     async def __aexit__(self, *_args: Any) -> None:
         await self.aclose()
+
+    def _get_host_lock(self, host: str) -> asyncio.Lock:
+        lock = self._host_locks.get(host)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._host_locks[host] = lock
+        return lock
+
+    def _get_robots_lock(self, host: str) -> asyncio.Lock:
+        lock = self._robots_locks.get(host)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._robots_locks[host] = lock
+        return lock
 
     async def _throttle_domain(self, host: str, min_delay: float | None = None) -> None:
         if self._is_mock_transport and self.default_rate_limit_seconds == 0.0:
@@ -195,30 +280,56 @@ class SafeAsyncHttpClient:
             )
         self.requests_made += 1
 
+    def _resolve_safe_redirect(self, current_url: str, current_host: str, response: httpx.Response) -> str:
+        raw_loc = (response.headers.get("location") or "").strip()
+        if not raw_loc:
+            raise AccessRestrictedError(
+                f"HTTP {response.status_code} redirect without Location on {current_host}",
+                status_code=response.status_code,
+            )
+        resolved = urljoin(current_url, raw_loc)
+        parsed = urlsplit(resolved)
+        if AUTH_REDIRECT_PATH_RE.search(parsed.path):
+            raise AccessRestrictedError(
+                f"Redirect to login/authentication wall rejected on {current_host}: {parsed.path}",
+                status_code=response.status_code,
+            )
+        clean_next, next_host = validate_public_https_url(resolved, allowed_hosts=None)
+        if not _is_legitimate_redirect_host(current_host, next_host, self.allowed_hosts):
+            raise AccessRestrictedError(
+                f"Cross-domain redirect from {current_host} to untrusted host {next_host} rejected.",
+                status_code=response.status_code,
+            )
+        self.allowed_hosts.add(next_host)
+        return clean_next
+
     async def ensure_robots_allowed(self, url: str, rate_limit_seconds: float | None = None) -> None:
         _, host = validate_public_https_url(url, self.allowed_hosts)
-        if host not in self._robots_cache:
-            robots_url = (
-                "https://www.empregare.com/pt-br/robots.txt"
-                if host == "www.empregare.com"
-                else f"https://{host}/robots.txt"
-            )
-            parser = RobotFileParser(robots_url)
-            try:
-                robots_txt = await self.get_text(
-                    robots_url,
-                    check_robots=False,
-                    rate_limit_seconds=rate_limit_seconds,
-                    allow_404_empty=True,
+        async with self._get_robots_lock(host):
+            if host not in self._robots_cache:
+                robots_url = (
+                    "https://www.empregare.com/pt-br/robots.txt"
+                    if host == "www.empregare.com"
+                    else f"https://{host}/robots.txt"
                 )
-                parser.parse(robots_txt.splitlines())
-            except AccessRestrictedError:
-                # If robots.txt itself returns 403/429, treat entire host as restricted
-                raise
-            self._robots_cache[host] = parser
-            crawl_delay = parser.crawl_delay("ResumatchLocal") or parser.crawl_delay("*")
-            if crawl_delay:
-                self._domain_delays[host] = float(crawl_delay)
+                parser = RobotFileParser(robots_url)
+                try:
+                    robots_txt = await self.get_text(
+                        robots_url,
+                        check_robots=False,
+                        rate_limit_seconds=rate_limit_seconds,
+                        allow_404_empty=True,
+                    )
+                    parser.parse(robots_txt.splitlines())
+                except AccessRestrictedError:
+                    raise
+                except ConnectorError:
+                    # Network/4xx error on /robots.txt itself defaults to empty (standard RFC 9309)
+                    parser.parse([])
+                self._robots_cache[host] = parser
+                crawl_delay = parser.crawl_delay("ResumatchLocal") or parser.crawl_delay("*")
+                if crawl_delay:
+                    self._domain_delays[host] = min(float(crawl_delay), 2.5)
 
         policy = self._robots_cache[host]
         if not policy.can_fetch("ResumatchLocal", url):
@@ -231,95 +342,136 @@ class SafeAsyncHttpClient:
         check_robots: bool = True,
         rate_limit_seconds: float | None = None,
         allow_404_empty: bool = False,
+        extra_headers: dict[str, str] | None = None,
     ) -> str:
         clean_url, host = validate_public_https_url(url, self.allowed_hosts)
-        cache_key = ("TEXT", clean_url)
+        hdr_sig = json.dumps(sorted((extra_headers or {}).items()))
+        cache_key = ("TEXT", clean_url, hdr_sig)
         if cache_key in self._response_cache:
             return self._response_cache[cache_key]
 
-        if check_robots:
-            await self.ensure_robots_allowed(clean_url, rate_limit_seconds=rate_limit_seconds)
+        current_url = clean_url
+        current_host = host
+        req_headers = {
+            "Accept": "text/html,application/xhtml+xml,application/rss+xml,application/xml,text/plain;q=0.9,*/*;q=0.8",
+            **(extra_headers or {}),
+        }
 
-        self._consume_budget()
-        await self._throttle_domain(host, rate_limit_seconds)
-        try:
-            response = await self._client.get(
-                clean_url,
-                headers={"Accept": "text/html,application/rss+xml,application/xml,text/plain;q=0.9"},
-            )
-        except httpx.HTTPError as exc:
-            raise ConnectorError(f"Network error fetching {host}: {type(exc).__name__}") from exc
-        finally:
-            self._last_request_at[host] = time.monotonic()
+        for hop in range(MAX_REDIRECT_HOPS + 1):
+            if check_robots:
+                await self.ensure_robots_allowed(current_url, rate_limit_seconds=rate_limit_seconds)
 
-        status = response.status_code
-        if allow_404_empty and status == 404:
-            self._response_cache[cache_key] = ""
-            return ""
-        if status in {401, 403, 429} or 300 <= status < 400:
-            raise AccessRestrictedError(
-                f"HTTP {status} restriction/redirect on {host}; aborting without bypass.",
-                status_code=status,
-            )
-        if status != 200:
-            raise ConnectorError(f"Unexpected HTTP {status} from {host}")
+            self._consume_budget()
+            async with self._get_host_lock(current_host):
+                await self._throttle_domain(current_host, rate_limit_seconds)
+                try:
+                    response = await self._client.get(current_url, headers=req_headers)
+                except httpx.HTTPError as exc:
+                    raise ConnectorError(f"Network error fetching {current_host}: {type(exc).__name__}") from exc
+                finally:
+                    self._last_request_at[current_host] = time.monotonic()
 
-        if len(response.content) > self.max_response_bytes:
-            raise ConnectorError(f"Response from {host} exceeded byte limit.")
+            status = response.status_code
+            if status in REDIRECT_STATUSES:
+                if hop >= MAX_REDIRECT_HOPS:
+                    raise AccessRestrictedError(
+                        f"Exceeded maximum redirects ({MAX_REDIRECT_HOPS}) on {current_host}",
+                        status_code=status,
+                    )
+                current_url = self._resolve_safe_redirect(current_url, current_host, response)
+                current_host = urlsplit(current_url).hostname.lower()  # type: ignore[union-attr]
+                continue
 
-        try:
-            decoded = response.content.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            decoded = response.content.decode("cp1252", errors="replace")
+            if allow_404_empty and status == 404:
+                self._response_cache[cache_key] = ""
+                return ""
+            if status in {202, 401, 403, 429} or 300 <= status < 400:
+                raise AccessRestrictedError(
+                    f"HTTP {status} restriction on {current_host}; aborting without bypass.",
+                    status_code=status,
+                )
+            if status != 200:
+                raise ConnectorError(f"Unexpected HTTP {status} from {current_host}")
 
-        if CAPTCHA_SIGNATURES.search(decoded):
-            raise AccessRestrictedError(
-                f"Anti-bot / CAPTCHA gate detected on {host}; aborting immediately."
-            )
+            if len(response.content) > self.max_response_bytes:
+                raise ConnectorError(f"Response from {current_host} exceeded byte limit.")
 
-        self._response_cache[cache_key] = decoded
-        return decoded
+            try:
+                decoded = response.content.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                decoded = response.content.decode("cp1252", errors="replace")
+
+            if CAPTCHA_SIGNATURES.search(decoded):
+                raise AccessRestrictedError(
+                    f"Anti-bot / CAPTCHA gate detected on {current_host}; aborting immediately."
+                )
+
+            self._response_cache[cache_key] = decoded
+            return decoded
+
+        raise AccessRestrictedError(f"Redirect loop on {host}")
 
     async def get_json(
         self,
         url: str,
         *,
         rate_limit_seconds: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> Any:
         clean_url, host = validate_public_https_url(url, self.allowed_hosts)
-        cache_key = ("JSON", clean_url)
+        hdr_sig = json.dumps(sorted((extra_headers or {}).items()))
+        cache_key = ("JSON", clean_url, hdr_sig)
         if cache_key in self._response_cache:
             return self._response_cache[cache_key]
 
-        self._consume_budget()
-        await self._throttle_domain(host, rate_limit_seconds)
-        try:
-            response = await self._client.get(
-                clean_url,
-                headers={"Accept": "application/json"},
-            )
-        except httpx.HTTPError as exc:
-            raise ConnectorError(f"Network error fetching JSON from {host}: {type(exc).__name__}") from exc
-        finally:
-            self._last_request_at[host] = time.monotonic()
+        current_url = clean_url
+        current_host = host
+        req_headers = {"Accept": "application/json", **(extra_headers or {})}
 
-        status = response.status_code
-        if status in {401, 403, 429} or 300 <= status < 400:
-            raise AccessRestrictedError(
-                f"HTTP {status} on JSON endpoint {host}",
-                status_code=status,
-            )
-        if status in {404, 410}:
-            raise AccessRestrictedError(f"Resource closed/missing ({status})", status_code=status)
-        if status != 200:
-            raise ConnectorError(f"Unexpected HTTP {status} from {host}")
+        for hop in range(MAX_REDIRECT_HOPS + 1):
+            self._consume_budget()
+            async with self._get_host_lock(current_host):
+                await self._throttle_domain(current_host, rate_limit_seconds)
+                try:
+                    response = await self._client.get(current_url, headers=req_headers)
+                except httpx.HTTPError as exc:
+                    raise ConnectorError(
+                        f"Network error fetching JSON from {current_host}: {type(exc).__name__}"
+                    ) from exc
+                finally:
+                    self._last_request_at[current_host] = time.monotonic()
 
-        if "json" not in response.headers.get("content-type", "").lower():
-            raise AccessRestrictedError(f"Non-JSON response from {host}; possible gateway block.")
+            status = response.status_code
+            if status in REDIRECT_STATUSES:
+                if hop >= MAX_REDIRECT_HOPS:
+                    raise AccessRestrictedError(
+                        f"Exceeded maximum redirects ({MAX_REDIRECT_HOPS}) on {current_host}",
+                        status_code=status,
+                    )
+                current_url = self._resolve_safe_redirect(current_url, current_host, response)
+                current_host = urlsplit(current_url).hostname.lower()  # type: ignore[union-attr]
+                continue
 
-        data = response.json()
-        self._response_cache[cache_key] = data
-        return data
+            if status in {202, 401, 403, 429} or 300 <= status < 400:
+                raise AccessRestrictedError(
+                    f"HTTP {status} on JSON endpoint {current_host}",
+                    status_code=status,
+                )
+            if status in {404, 410}:
+                raise AccessRestrictedError(f"Resource closed/missing ({status})", status_code=status)
+            if status != 200:
+                raise ConnectorError(f"Unexpected HTTP {status} from {current_host}")
+
+            if "json" not in response.headers.get("content-type", "").lower():
+                raise AccessRestrictedError(
+                    f"Non-JSON response from {current_host}; possible gateway block."
+                )
+
+            data = response.json()
+            self._response_cache[cache_key] = data
+            return data
+
+        raise AccessRestrictedError(f"Redirect loop on {host}")
 
     async def post_empregare_mcp_readonly(
         self,
@@ -335,27 +487,30 @@ class SafeAsyncHttpClient:
         if method not in {"initialize", "tools/list", "tools/call"} or (
             method == "tools/call" and (params or {}).get("name") != "buscar_vagas"
         ):
-            raise ConnectorError(f"Forbidden MCP method/tool '{method}': strictly read-only buscar_vagas allowed.")
+            raise ConnectorError(
+                f"Forbidden MCP method/tool '{method}': strictly read-only buscar_vagas allowed."
+            )
 
         self._consume_budget()
-        await self._throttle_domain(host, rate_limit_seconds)
-        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
-        if params is not None:
-            payload["params"] = params
+        async with self._get_host_lock(host):
+            await self._throttle_domain(host, rate_limit_seconds)
+            payload: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
+            if params is not None:
+                payload["params"] = params
 
-        try:
-            response = await self._client.post(
-                clean_url,
-                json=payload,
-                headers={
-                    "Accept": "application/json, text/event-stream",
-                    "MCP-Protocol-Version": "2025-03-26",
-                },
-            )
-        except httpx.HTTPError as exc:
-            raise ConnectorError(f"MCP network failure: {type(exc).__name__}") from exc
-        finally:
-            self._last_request_at[host] = time.monotonic()
+            try:
+                response = await self._client.post(
+                    clean_url,
+                    json=payload,
+                    headers={
+                        "Accept": "application/json, text/event-stream",
+                        "MCP-Protocol-Version": "2025-03-26",
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise ConnectorError(f"MCP network failure: {type(exc).__name__}") from exc
+            finally:
+                self._last_request_at[host] = time.monotonic()
 
         if response.status_code in {401, 403, 429} or 300 <= response.status_code < 400:
             raise AccessRestrictedError(

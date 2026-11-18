@@ -1,778 +1,976 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
-import type {
-  DiffEntry,
-  ExportPdfResponse,
-  GuardWarning,
-  JobListItem,
-  MasterProfile,
-  ResumeDocumentPayload,
-  SectionKind,
-} from '../types/api';
+import { GoogleConnectCard } from '../components/GoogleConnectCard';
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconChevronDown,
+  IconClose,
+  IconDownload,
+  IconPlus,
+  IconSparkles,
+  IconTrash,
+} from '../components/Icons';
+import type { JobListItem, ResumeDraft, ResumeFontFamily, SectionKind } from '../types/api';
 import styles from './ResumeStudioPage.module.css';
 
 interface Props {
-  profile: MasterProfile | null;
+  aiConnected: boolean;
   initialJob: JobListItem | null;
-  initialAreaId: string | null;
-  onRefreshHealth: () => void;
+  initialJobDescription: string;
+  onAiConnected: () => void;
 }
 
-const A4_PAGE_HEIGHT_PX = 1122.5; // 297mm @ 96 CSS DPI
+const A4_HEIGHT_PX = 1122.5;
+const PAGE_MARGIN_TOP_PX = 52.9; // 14mm at 96dpi
+const PRINTABLE_CONTENT_PER_PAGE_PX = 1016.7; // 269mm (297mm - 28mm @page margins)
+
+const FONT_OPTIONS: Array<{ value: ResumeFontFamily; label: string }> = [
+  { value: 'Libre Franklin', label: 'Libre Franklin (Padrão ATS)' },
+  { value: 'Inter', label: 'Inter' },
+  { value: 'Arial', label: 'Arial' },
+  { value: 'Georgia', label: 'Georgia' },
+  { value: 'Times New Roman', label: 'Times New Roman' },
+];
+
+const SECTION_NAMES_PT: Record<SectionKind, string> = {
+  summary: 'Resumo Profissional',
+  experience: 'Experiência Profissional',
+  education: 'Formação Acadêmica',
+  projects: 'Projetos',
+  courses: 'Cursos e Certificações',
+  skills: 'Competências Técnicas',
+  languages: 'Idiomas',
+};
 
 export const ResumeStudioPage: React.FC<Props> = ({
-  profile,
+  aiConnected,
   initialJob,
-  initialAreaId,
-  onRefreshHealth,
+  initialJobDescription,
+  onAiConnected,
 }) => {
-  const presetKeys = profile ? Object.keys(profile.area_presets) : [];
-  const defaultArea =
-    (initialAreaId && presetKeys.includes(initialAreaId) ? initialAreaId : presetKeys[0]) ||
-    'suporte';
+  const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState<string>(initialJob?.id ?? '');
+  const [showManualBox, setShowManualBox] = useState<boolean>(!initialJob);
+  const [manualTitle, setManualTitle] = useState<string>(initialJob?.title ?? '');
+  const [manualCompany, setManualCompany] = useState<string>(initialJob?.company ?? '');
+  const [manualDescription, setManualDescription] = useState<string>(initialJobDescription);
+  const [maxPages, setMaxPages] = useState<number>(1);
+  const [fontFamily, setFontFamily] = useState<ResumeFontFamily>('Libre Franklin');
 
-  const [areaId, setAreaId] = useState<string>(defaultArea);
-  const [mode, setMode] = useState<'deterministic' | 'surgical_ai'>('deterministic');
-  const [providerOverride, setProviderOverride] = useState<'' | 'gemini' | 'groq' | 'ollama'>('');
-
-  const [jobsList, setJobsList] = useState<JobListItem[]>([]);
-  const [linkedOpportunityId, setLinkedOpportunityId] = useState<string>(initialJob?.id ?? '');
-  const [jobTitle, setJobTitle] = useState<string>(initialJob?.title ?? '');
-  const [company, setCompany] = useState<string>(initialJob?.company ?? '');
-  const [jobDescription, setJobDescription] = useState<string>('');
-
-  const [payload, setPayload] = useState<ResumeDocumentPayload | null>(null);
+  const [draft, setDraft] = useState<ResumeDraft | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string>('');
-  const [composeMs, setComposeMs] = useState<number | null>(null);
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({
+    header: false,
+    summary: true,
+    experience: true,
+  });
 
-  const [diffEntries, setDiffEntries] = useState<DiffEntry[]>([]);
-  const [guardWarnings, setGuardWarnings] = useState<GuardWarning[]>([]);
-  const [adaptMeta, setAdaptMeta] = useState<{
-    provider: string;
-    model: string;
-    totalTokens: number;
-  } | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const [autoFit, setAutoFit] = useState(true);
-  const [zoom, setZoom] = useState<number>(0.74);
-  const [measuredHeightPx, setMeasuredHeightPx] = useState<number>(A4_PAGE_HEIGHT_PX * 0.85);
-
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [exportResult, setExportResult] = useState<ExportPdfResponse | null>(null);
-
+  const [zoom, setZoom] = useState<number>(0.72);
+  const [contentFlowPx, setContentFlowPx] = useState<number>(680);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const renderSeqRef = useRef<number>(0);
 
   useEffect(() => {
     api
       .getJobs({ limit: 80 })
-      .then((res) => setJobsList(res.items))
+      .then((res) => setJobs(res.items))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (initialJob) {
-      setLinkedOpportunityId(initialJob.id);
-      setJobTitle(initialJob.title);
-      setCompany(initialJob.company ?? '');
-      if (initialAreaId && presetKeys.includes(initialAreaId)) {
-        setAreaId(initialAreaId);
-      }
+      setSelectedOpportunityId(initialJob.id);
+      setManualTitle(initialJob.title);
+      setManualCompany(initialJob.company ?? '');
+      setManualDescription(initialJobDescription);
+      setShowManualBox(false);
     }
-  }, [initialJob, initialAreaId, presetKeys]);
+  }, [initialJob, initialJobDescription]);
 
-  const refreshHtmlFromPayload = useCallback(
-    async (nextPayload: ResumeDocumentPayload, targetAreaId: string) => {
-      const rendered = await api.renderResumeHtml({
-        area_id: targetAreaId,
-        opportunity_id: linkedOpportunityId || null,
-        job_title: jobTitle || undefined,
-        company: company || undefined,
-        job_description: jobDescription,
-        payload_override: nextPayload,
-      });
-      setPayload(rendered.payload);
-      setPreviewHtml(rendered.html);
-    },
-    [linkedOpportunityId, jobTitle, company, jobDescription]
-  );
-
-  const runDeterministicCompose = useCallback(
-    async (targetArea = areaId, sectionOrder?: SectionKind[]) => {
-      if (!targetArea) return;
-      setBusyAction('compose');
-      setErrorMsg(null);
-      try {
-        const composed = await api.composeResume({
-          area_id: targetArea,
-          opportunity_id: linkedOpportunityId || null,
-          job_title: jobTitle || undefined,
-          company: company || undefined,
-          job_description: jobDescription,
-          section_order_override: sectionOrder,
-        });
-        setComposeMs(composed.elapsed_ms);
-        setDiffEntries([]);
-        setGuardWarnings([]);
-        setAdaptMeta(null);
-        await refreshHtmlFromPayload(composed.payload, targetArea);
-      } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : 'Erro ao montar currículo determinístico.');
-      } finally {
-        setBusyAction(null);
-      }
-    },
-    [areaId, linkedOpportunityId, jobTitle, company, jobDescription, refreshHtmlFromPayload]
-  );
-
+  // Live HTML refresh whenever draft changes (with AbortController + sequence guard against race conditions)
   useEffect(() => {
-    if (profile && areaId && profile.area_presets[areaId]) {
-      void runDeterministicCompose(areaId);
+    if (!draft) {
+      setPreviewHtml('');
+      return;
     }
-  }, [areaId, linkedOpportunityId]); // eslint-disable-line react-hooks/exhaustive-deps
+    const seq = ++renderSeqRef.current;
+    const abortCtrl = new AbortController();
+    const timer = window.setTimeout(() => {
+      api
+        .renderResumeHtml(draft, abortCtrl.signal)
+        .then((res) => {
+          if (seq === renderSeqRef.current) {
+            setPreviewHtml(res.html);
+          }
+        })
+        .catch(() => {});
+    }, 200);
+    return () => {
+      window.clearTimeout(timer);
+      abortCtrl.abort();
+    };
+  }, [draft]);
 
-  const handleRunSurgicalAi = async () => {
-    setBusyAction('adapt');
-    setErrorMsg(null);
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setNotice(null);
     try {
-      const res = await api.adaptResumeSurgical({
-        area_id: areaId,
-        opportunity_id: linkedOpportunityId || null,
-        job_title: jobTitle || undefined,
-        company: company || undefined,
-        job_description: jobDescription,
-        section_order_override: payload?.section_order,
-        provider_override: providerOverride || null,
+      const res = await api.generateResume({
+        opportunity_id: selectedOpportunityId || null,
+        job_title: manualTitle || undefined,
+        company: manualCompany || null,
+        job_description: manualDescription || undefined,
+        max_pages: maxPages,
+        font_family: fontFamily,
       });
-      setMode('surgical_ai');
-      setDiffEntries(res.diff);
-      setGuardWarnings(res.guard_warnings);
-      setAdaptMeta({
-        provider: res.provider,
-        model: res.model,
-        totalTokens: res.token_usage.total_tokens,
-      });
-      await refreshHtmlFromPayload(res.payload, areaId);
+      setDraft(res.draft);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Falha na chamada cirúrgica de IA.');
+      setNotice(err instanceof Error ? err.message : 'Não foi possível gerar o currículo.');
     } finally {
-      setBusyAction(null);
+      setGenerating(false);
     }
   };
 
-  const handleMoveSection = async (idx: number, delta: -1 | 1) => {
-    if (!payload) return;
-    const nextOrder = [...payload.section_order];
-    const targetIdx = idx + delta;
-    if (targetIdx < 0 || targetIdx >= nextOrder.length) return;
-    const [moved] = nextOrder.splice(idx, 1);
-    nextOrder.splice(targetIdx, 0, moved);
-    const updated: ResumeDocumentPayload = { ...payload, section_order: nextOrder };
-    await refreshHtmlFromPayload(updated, areaId);
-  };
-
-  const handleToggleBullet = async (
-    expId: string,
-    bulletId: string,
-    bulletText: string,
-    factualSource: string
-  ) => {
-    if (!payload) return;
-    const nextExperiences = payload.experiences.map((exp) => {
-      if (exp.id !== expId) return exp;
-      const exists = exp.bullets.some((b) => b.id === bulletId);
-      if (exists) {
-        if (exp.bullets.length <= 1) return exp; // preserve at least 1 bullet
-        return { ...exp, bullets: exp.bullets.filter((b) => b.id !== bulletId) };
-      }
-      return {
-        ...exp,
-        bullets: [
-          ...exp.bullets,
-          { id: bulletId, text: bulletText, score: 1, factual_source: factualSource },
-        ],
-      };
-    });
-    await refreshHtmlFromPayload({ ...payload, experiences: nextExperiences }, areaId);
-  };
-
-  const handleMoveActiveBullet = async (expId: string, bulletIdx: number, delta: -1 | 1) => {
-    if (!payload) return;
-    const nextExperiences = payload.experiences.map((exp) => {
-      if (exp.id !== expId) return exp;
-      const list = [...exp.bullets];
-      const dest = bulletIdx + delta;
-      if (dest < 0 || dest >= list.length) return exp;
-      const [item] = list.splice(bulletIdx, 1);
-      list.splice(dest, 0, item);
-      return { ...exp, bullets: list };
-    });
-    await refreshHtmlFromPayload({ ...payload, experiences: nextExperiences }, areaId);
-  };
-
-  const handleToggleCompact = async (compact: boolean) => {
-    if (!payload) return;
-    await refreshHtmlFromPayload({ ...payload, compact_mode: compact }, areaId);
-  };
-
-  const handleExportPdf = async () => {
-    if (!payload) return;
-    setBusyAction('export');
-    setErrorMsg(null);
-    setExportResult(null);
+  const handleExportAndDownload = async () => {
+    if (!draft) return;
+    setExporting(true);
+    setNotice(null);
     try {
-      const exported = await api.exportResumePdf({
-        area_id: areaId,
-        opportunity_id: linkedOpportunityId || null,
-        job_title: jobTitle || undefined,
-        company: company || undefined,
-        job_description: jobDescription,
-        section_order_override: payload.section_order,
-        generation_mode: mode,
-        auto_fit: autoFit,
-        payload_override: payload,
+      const res = await api.exportResumePdf({
+        draft,
+        opportunity_id: selectedOpportunityId || null,
+        auto_fit: true,
       });
-      setExportResult(exported);
-      setPayload(exported.payload);
-      onRefreshHealth();
+      setDraft(res.draft);
+      const downloadUrl = `/api/resumes/versions/${encodeURIComponent(res.version_id)}/pdf`;
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = res.output_pdf_filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setNotice(`PDF "${res.output_pdf_filename}" gerado e baixado.`);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Erro ao exportar PDF A4.');
+      setNotice(err instanceof Error ? err.message : 'Erro ao exportar o PDF.');
     } finally {
-      setBusyAction(null);
+      setExporting(false);
     }
   };
 
-  const measureIframeHeight = useCallback(() => {
+  const toggleOpen = (key: string) => {
+    setOpenSec((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const moveSection = (idx: number, delta: -1 | 1) => {
+    if (!draft) return;
+    const order = [...draft.section_order];
+    const target = idx + delta;
+    if (target < 0 || target >= order.length) return;
+    const [moved] = order.splice(idx, 1);
+    order.splice(target, 0, moved);
+    setDraft({ ...draft, section_order: order });
+  };
+
+  const deleteEntireSection = (kind: SectionKind) => {
+    if (!draft) return;
+    const nextOrder = draft.section_order.filter((k) => k !== kind);
+    const cleared: Partial<ResumeDraft> = { section_order: nextOrder };
+    if (kind === 'summary') cleared.summary = '';
+    if (kind === 'experience') cleared.experiences = [];
+    if (kind === 'education') cleared.education = [];
+    if (kind === 'projects') cleared.projects = [];
+    if (kind === 'courses') cleared.courses = [];
+    if (kind === 'skills') cleared.skill_groups = [];
+    if (kind === 'languages') cleared.languages = [];
+    setDraft({ ...draft, ...cleared });
+  };
+
+  const measureIframe = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
-    if (!doc || !doc.body) return;
-    const h = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
-    if (h > 100) {
-      setMeasuredHeightPx(h);
+    if (!doc?.body) return;
+    const measureOnce = () => {
+      const flowNode = doc.getElementById('resume-flow');
+      if (flowNode) {
+        const flowH = Math.ceil(flowNode.getBoundingClientRect().height || flowNode.scrollHeight);
+        if (flowH > 40) setContentFlowPx(flowH);
+      } else {
+        const fallbackH = Math.max(100, doc.body.scrollHeight - PAGE_MARGIN_TOP_PX * 2);
+        setContentFlowPx(fallbackH);
+      }
+    };
+    measureOnce();
+    if ('fonts' in doc && doc.fonts?.ready) {
+      doc.fonts.ready.then(measureOnce).catch(() => {});
     }
   }, []);
 
-  const maxPages = payload?.max_pages ?? 1;
-  const budgetPx = maxPages * A4_PAGE_HEIGHT_PX;
-  const fillRatio = measuredHeightPx / budgetPx;
-  const estimatedPages = Math.max(1, Math.ceil((measuredHeightPx - 12) / A4_PAGE_HEIGHT_PX));
-  const isOverflow = measuredHeightPx > budgetPx + 14;
-  const iframeDisplayHeight = Math.max(maxPages, estimatedPages) * A4_PAGE_HEIGHT_PX;
-
-  const currentLocale = payload?.locale ?? profile?.area_presets[areaId]?.locale ?? 'pt-BR';
+  const activeMaxPages = draft?.max_pages ?? maxPages;
+  const contentBudgetPx = activeMaxPages * PRINTABLE_CONTENT_PER_PAGE_PX;
+  const isOverflow = contentFlowPx > contentBudgetPx + 6;
+  const estimatedPages = Math.max(1, Math.ceil((contentFlowPx - 6) / PRINTABLE_CONTENT_PER_PAGE_PX));
+  const visualSheetPages = Math.max(activeMaxPages, estimatedPages);
+  const iframeHeight =
+    visualSheetPages === 1
+      ? A4_HEIGHT_PX
+      : Math.max(visualSheetPages * A4_HEIGHT_PX, contentFlowPx + PAGE_MARGIN_TOP_PX * 2 + 12);
+  const limitRuleTopPx = PAGE_MARGIN_TOP_PX + activeMaxPages * PRINTABLE_CONTENT_PER_PAGE_PX;
 
   return (
-    <div className={styles.studioSplit}>
-      {/* LEFT CONTROLS */}
-      <div className={styles.leftControls}>
-        {/* Area Preset Picker */}
-        <div className={`card ${styles.panelCard}`}>
-          <div className={styles.panelHeader}>
-            <span className={styles.panelTitle}>1. Preset de Área &amp; Idioma</span>
-            <span className="badge badgeInfo">
-              Currículo: {currentLocale} • Limite: {maxPages} pág. A4
-            </span>
-          </div>
-          <div className={styles.presetGrid}>
-            {profile &&
-              Object.values(profile.area_presets).map((preset) => (
-                <button
-                  key={preset.area_id}
-                  type="button"
-                  className={`${styles.presetBtn} ${
-                    areaId === preset.area_id ? styles.presetBtnActive : ''
-                  }`}
-                  onClick={() => {
-                    setAreaId(preset.area_id);
-                    setExportResult(null);
-                  }}
-                >
-                  <span>{preset.display_name}</span>
-                  <span className="badge badgeNeutral">{preset.locale}</span>
-                </button>
-              ))}
-          </div>
-        </div>
+    <div className={styles.split}>
+      {/* LEFT: AI Generator + Collapsible Draft Editor */}
+      <div className={styles.leftColumn}>
+        {!aiConnected && (
+          <GoogleConnectCard connected={false} onStatusChanged={onAiConnected} />
+        )}
 
-        {/* Optional Linked Job / Context */}
-        <div className={`card ${styles.panelCard}`}>
-          <div className={styles.panelHeader}>
-            <span className={styles.panelTitle}>2. Contexto da Vaga (Opcional)</span>
-            <button
-              type="button"
-              className="btn btnSmall"
-              disabled={busyAction !== null}
-              onClick={() => runDeterministicCompose(areaId, payload?.section_order)}
-            >
-              Recalcular Seleção Determinística
-            </button>
-          </div>
+        <div className={`panel ${styles.generatorCard}`}>
+          <h2 className={styles.cardTitle}>Adaptar Currículo</h2>
 
-          <div className="fieldGroup">
-            <label className="fieldLabel">Vincular Vaga Salva no SQLite</label>
+          <div className="field">
+            <label className="label">Vaga selecionada</label>
             <select
               className="select"
-              value={linkedOpportunityId}
+              value={selectedOpportunityId}
               onChange={(e) => {
                 const id = e.target.value;
-                setLinkedOpportunityId(id);
-                const found = jobsList.find((j) => j.id === id);
+                setSelectedOpportunityId(id);
+                const found = jobs.find((j) => j.id === id);
                 if (found) {
-                  setJobTitle(found.title);
-                  setCompany(found.company ?? '');
+                  setManualTitle(found.title);
+                  setManualCompany(found.company ?? '');
                 }
               }}
             >
-              <option value="">Sem vínculo fixo (apenas preset ou descrição colada abaixo)</option>
-              {jobsList.map((j) => (
+              <option value="">Colar descrição avulsa abaixo</option>
+              {jobs.map((j) => (
                 <option key={j.id} value={j.id}>
-                  [{j.area_id || 'geral'}] {j.title} — {j.company || 'Empresa omitida'}
+                  {j.title} {j.company ? `— ${j.company}` : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          <div className={styles.twoCols}>
-            <div className="fieldGroup">
-              <label className="fieldLabel">Cargo Alvo</label>
-              <input
-                className="input"
-                value={jobTitle}
-                placeholder="Ex.: Analista de Suporte / Dev Jr"
-                onChange={(e) => setJobTitle(e.target.value)}
-              />
-            </div>
-            <div className="fieldGroup">
-              <label className="fieldLabel">Empresa</label>
-              <input
-                className="input"
-                value={company}
-                placeholder="Opcional"
-                onChange={(e) => setCompany(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="fieldGroup">
-            <label className="fieldLabel">
-              Descrição / Requisitos Adicionais para Pontuação de Bullets e Equivalências
-            </label>
-            <textarea
-              rows={3}
-              className="textarea"
-              placeholder="Cole requisitos da vaga para priorizar bullets e equivalências lexicais auditadas..."
-              value={jobDescription}
-              onChange={(e) => setJobDescription(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Mode Toggle: Deterministic vs Surgical AI */}
-        <div className={`card ${styles.panelCard}`}>
-          <div className={styles.panelHeader}>
-            <span className={styles.panelTitle}>3. Motor de Composição &amp; Exportação PDF</span>
-            {composeMs !== null && (
-              <span className="badge badgeOk">Determinístico: {composeMs} ms</span>
-            )}
-          </div>
-
-          <div className={styles.modeToggleRow}>
+          <div>
             <button
               type="button"
-              className={`${styles.modeButton} ${
-                mode === 'deterministic' ? styles.modeButtonActive : ''
-              }`}
-              onClick={() => {
-                setMode('deterministic');
-                void runDeterministicCompose(areaId, payload?.section_order);
-              }}
+              className={styles.togglePasteBtn}
+              onClick={() => setShowManualBox((v) => !v)}
             >
-              <span className={styles.modeTitle}>Modo Determinístico (Zero IA)</span>
-              <span className={styles.modeSub}>
-                Pontuação instantânea por área, tags e equivalências auditadas.
+              <span className={`chevron ${showManualBox ? 'chevronOpen' : ''}`}>
+                <IconChevronDown size={14} />
               </span>
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.modeButton} ${
-                mode === 'surgical_ai' ? styles.modeButtonActive : ''
-              }`}
-              onClick={() => setMode('surgical_ai')}
-            >
-              <span className={styles.modeTitle}>Modo IA Cirúrgica (1 Chamada)</span>
-              <span className={styles.modeSub}>
-                PIIStripper mascara instituições + VeracityGuard bloqueia alucinações.
+              <span>
+                {selectedOpportunityId
+                  ? 'Complementar ou editar texto da vaga'
+                  : 'Descrição da vaga'}
               </span>
             </button>
           </div>
 
-          {mode === 'surgical_ai' && (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div className="fieldGroup" style={{ flex: 1, minWidth: 180 }}>
-                <label className="fieldLabel">Provedor LLM para Ajuste Fino</label>
-                <select
-                  className="select"
-                  value={providerOverride}
-                  onChange={(e) =>
-                    setProviderOverride(e.target.value as '' | 'gemini' | 'groq' | 'ollama')
-                  }
-                >
-                  <option value="">Usar provedor padrão configurado</option>
-                  <option value="gemini">Google Gemini (Structured JSON)</option>
-                  <option value="groq">Groq (Llama Structured)</option>
-                  <option value="ollama">Ollama Local (127.0.0.1:11434)</option>
-                </select>
-              </div>
-              <button
-                type="button"
-                className="btn btnPrimary"
-                disabled={busyAction !== null}
-                onClick={handleRunSurgicalAi}
-              >
-                {busyAction === 'adapt'
-                  ? 'Executando IA Cirúrgica...'
-                  : 'Executar Adaptação Cirúrgica'}
-              </button>
-            </div>
-          )}
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: 10,
-              paddingTop: 6,
-              borderTop: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
-                <input
-                  type="checkbox"
-                  checked={autoFit}
-                  onChange={(e) => setAutoFit(e.target.checked)}
-                />
-                Auto-Fit A4 ({maxPages} pág.)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5 }}>
-                <input
-                  type="checkbox"
-                  checked={Boolean(payload?.compact_mode)}
-                  onChange={(e) => void handleToggleCompact(e.target.checked)}
-                />
-                Tipografia Compacta
-              </label>
-            </div>
-
-            <button
-              type="button"
-              className="btn btnPrimary"
-              disabled={!payload || busyAction !== null}
-              onClick={handleExportPdf}
-            >
-              {busyAction === 'export'
-                ? 'Renderizando Chromium + Validando pypdf...'
-                : 'Exportar PDF A4 Limpo'}
-            </button>
-          </div>
-
-          {errorMsg && <div className="bannerAlert badgeDanger">{errorMsg}</div>}
-
-          {exportResult && (
-            <div className={`card ${styles.exportResultCard}`}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-                <strong>✓ PDF A4 Validado pelo ATS Validator (`pypdf`)</strong>
-                <span className="badge badgeOk">
-                  {exportResult.ats_validation.page_count}/{exportResult.ats_validation.max_pages}{' '}
-                  página(s)
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Caminho salvo: <code>user_data/{exportResult.export_rel_path}</code> •{' '}
-                {(exportResult.pdf_size_bytes / 1024).toFixed(1)} KB •{' '}
-                {exportResult.ats_validation.clickable_uris.length} link(s) clicáveis
-              </div>
-              <div className="mono" style={{ color: 'var(--text-muted)' }}>
-                SHA-256: {exportResult.pdf_sha256.slice(0, 24)}…
-              </div>
-              <div>
-                <a
-                  className="btn btnSuccess btnSmall"
-                  href={`/api/resumes/versions/${encodeURIComponent(exportResult.version_id)}/pdf`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  ⬇ Baixar Arquivo PDF ({exportResult.output_pdf_filename})
-                </a>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Diff Inspector & VeracityGuard Warnings */}
-        {(diffEntries.length > 0 || guardWarnings.length > 0) && (
-          <div className={`card ${styles.panelCard}`}>
-            <div className={styles.panelHeader}>
-              <span className={styles.panelTitle}>Inspetor de Diff &amp; VeracityGuard</span>
-              {adaptMeta && (
-                <span className="badge badgePurple">
-                  {adaptMeta.provider}/{adaptMeta.model} • {adaptMeta.totalTokens} tokens
-                </span>
-              )}
-            </div>
-
-            {guardWarnings.map((w, idx) => (
-              <div key={idx} className="bannerAlert badgeWarn">
-                <span>
-                  <strong>Fallback Granular [{w.block_id}]:</strong> {w.reason} — {w.detail}
-                </span>
-              </div>
-            ))}
-
-            <div className={styles.diffList}>
-              {diffEntries.map((d) => (
-                <div key={d.block_id} className={styles.diffBox}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <strong className="mono">{d.block_id}</strong>
-                    {d.reverted_to_deterministic ? (
-                      <span className="badge badgeWarn">Revertido p/ Determinístico</span>
-                    ) : d.changed ? (
-                      <span className="badge badgeOk">Ajustado</span>
-                    ) : (
-                      <span className="badge badgeNeutral">Inalterado</span>
-                    )}
-                  </div>
-                  {d.changed && (
-                    <>
-                      <div className={styles.diffBefore}>− {d.before}</div>
-                      <div className={styles.diffAfter}>+ {d.after}</div>
-                    </>
-                  )}
+          {(showManualBox || !selectedOpportunityId) && (
+            <>
+              <div className={styles.grid2}>
+                <div className="field">
+                  <label className="label">Cargo</label>
+                  <input
+                    className="input"
+                    placeholder="Ex.: Analista de Dados Júnior"
+                    value={manualTitle}
+                    onChange={(e) => setManualTitle(e.target.value)}
+                  />
                 </div>
-              ))}
+                <div className="field">
+                  <label className="label">Empresa (opcional)</label>
+                  <input
+                    className="input"
+                    placeholder="Opcional"
+                    value={manualCompany}
+                    onChange={(e) => setManualCompany(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label className="label">Descrição e requisitos da vaga</label>
+                <textarea
+                  rows={4}
+                  className="textarea"
+                  placeholder="Cole aqui o texto da vaga..."
+                  value={manualDescription}
+                  onChange={(e) => setManualDescription(e.target.value)}
+                />
+              </div>
+            </>
+          )}
+
+          <div className={styles.controlsRow}>
+            <div className="field" style={{ width: 135 }}>
+              <label className="label">Limite de páginas</label>
+              <select
+                className="select"
+                value={maxPages}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setMaxPages(next);
+                  if (draft) setDraft({ ...draft, max_pages: next });
+                }}
+              >
+                <option value={1}>1 página</option>
+                <option value={2}>2 páginas</option>
+              </select>
             </div>
+
+            <div className="field" style={{ flex: 1, minWidth: 165 }}>
+              <label className="label">Fonte</label>
+              <select
+                className="select"
+                value={draft?.font_family ?? fontFamily}
+                onChange={(e) => {
+                  const nextFont = e.target.value as ResumeFontFamily;
+                  setFontFamily(nextFont);
+                  if (draft) setDraft({ ...draft, font_family: nextFont });
+                }}
+              >
+                {FONT_OPTIONS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              className="btnGhost"
+              disabled={generating || !aiConnected}
+              onClick={handleGenerate}
+            >
+              <IconSparkles size={15} />
+              <span>{generating ? 'Gerando rascunho...' : 'Gerar com IA'}</span>
+            </button>
+          </div>
+        </div>
+
+        {notice && (
+          <div className="noticeBar" role="status">
+            <span>{notice}</span>
+            <button
+              type="button"
+              className="iconBtn"
+              onClick={() => setNotice(null)}
+              aria-label="Fechar aviso"
+            >
+              <IconClose size={15} />
+            </button>
           </div>
         )}
 
-        {/* Section Ordering & Bullet Selector */}
-        {payload && (
-          <div className={`card ${styles.panelCard}`}>
-            <span className={styles.panelTitle}>4. Ordem das Seções &amp; Curadoria de Bullets</span>
-
-            <div className="fieldGroup">
-              <label className="fieldLabel">Resumo Profissional Renderizado</label>
-              <textarea
-                rows={3}
-                className="textarea"
-                value={payload.summary.text}
-                onChange={(e) => {
-                  const next = {
-                    ...payload,
-                    summary: { ...payload.summary, text: e.target.value },
-                  };
-                  setPayload(next);
-                }}
-                onBlur={() => void refreshHtmlFromPayload(payload, areaId)}
-              />
-            </div>
-
-            <div className="fieldGroup">
-              <label className="fieldLabel">Ordenação Dinâmica de Seções</label>
-              <div className={styles.reorderList}>
-                {payload.section_order.map((sec, idx) => (
-                  <div key={sec} className={styles.reorderItem}>
-                    <span>
-                      <strong>{idx + 1}.</strong> {payload.section_labels[sec] || sec} (
-                      <code>{sec}</code>)
-                    </span>
-                    <div className={styles.bulletControls}>
-                      <button
-                        type="button"
-                        className="btn btnSmall"
-                        disabled={idx === 0}
-                        onClick={() => void handleMoveSection(idx, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btnSmall"
-                        disabled={idx === payload.section_order.length - 1}
-                        onClick={() => void handleMoveSection(idx, 1)}
-                      >
-                        ↓
-                      </button>
+        {/* Editable Collapsible Sections of Generated ResumeDraft */}
+        {draft && (
+          <div className={styles.accordionStack}>
+            {/* Header quick edit */}
+            <div className={styles.accordion}>
+              <div className={styles.accordionHead}>
+                <button
+                  type="button"
+                  className={styles.accordionToggle}
+                  aria-expanded={Boolean(openSec.header)}
+                  onClick={() => toggleOpen('header')}
+                >
+                  <span className={`chevron ${openSec.header ? 'chevronOpen' : ''}`}>
+                    <IconChevronDown size={15} />
+                  </span>
+                  <span>Cabeçalho e Contatos</span>
+                </button>
+              </div>
+              <div className={`accordionCollapse ${openSec.header ? 'accordionCollapseOpen' : ''}`}>
+                <div className="accordionCollapseInner">
+                  <div className={styles.accordionContent}>
+                    <div className="field">
+                      <label className="label">Nome</label>
+                      <input
+                        className="input"
+                        value={draft.header.full_name}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            header: { ...draft.header, full_name: e.target.value },
+                          })
+                        }
+                      />
                     </div>
+                    <div className={styles.grid2}>
+                      <div className="field">
+                        <label className="label">Linha de local</label>
+                        <input
+                          className="input"
+                          value={draft.header.location_line}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              header: { ...draft.header, location_line: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label className="label">Linha de contato</label>
+                        <input
+                          className="input"
+                          value={draft.header.contact_line}
+                          onChange={(e) =>
+                            setDraft({
+                              ...draft,
+                              header: { ...draft.header, contact_line: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                    {draft.header.links.map((lnk, lIdx) => (
+                      <div key={lIdx} className={styles.bulletRow}>
+                        <input
+                          className="input"
+                          value={lnk.display_text}
+                          onChange={(e) => {
+                            const next = [...draft.header.links];
+                            next[lIdx] = { ...lnk, display_text: e.target.value };
+                            setDraft({ ...draft, header: { ...draft.header, links: next } });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="iconBtn"
+                          title="Remover link do rascunho"
+                          onClick={() =>
+                            setDraft({
+                              ...draft,
+                              header: {
+                                ...draft.header,
+                                links: draft.header.links.filter((_, i) => i !== lIdx),
+                              },
+                            })
+                          }
+                        >
+                          <IconTrash size={14} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             </div>
 
-            {/* Active & Available Bullets per Experience */}
-            {profile?.experiences.map((masterExp) => {
-              const renderedExp = payload.experiences.find((e) => e.id === masterExp.id);
-              const activeBullets = renderedExp?.bullets ?? [];
-              const activeIds = new Set(activeBullets.map((b) => b.id));
+            {/* Dynamic Ordered Sections */}
+            {draft.section_order.map((secKind, secIdx) => (
+              <div key={secKind} className={styles.accordion}>
+                <div className={styles.accordionHead}>
+                  <button
+                    type="button"
+                    className={styles.accordionToggle}
+                    aria-expanded={Boolean(openSec[secKind])}
+                    onClick={() => toggleOpen(secKind)}
+                  >
+                    <span className={`chevron ${openSec[secKind] ? 'chevronOpen' : ''}`}>
+                      <IconChevronDown size={15} />
+                    </span>
+                    <span>{SECTION_NAMES_PT[secKind]}</span>
+                  </button>
 
-              return (
-                <div key={masterExp.id} className="fieldGroup">
-                  <label className="fieldLabel">
-                    Bullets Ativos — {masterExp.role} ({activeBullets.length} selecionados)
-                  </label>
-                  <div className={styles.reorderList}>
-                    {activeBullets.map((b, idx) => (
-                      <div key={b.id} className={styles.bulletCard}>
-                        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                          <input
-                            type="checkbox"
-                            checked
-                            onChange={() =>
-                              void handleToggleBullet(masterExp.id, b.id, b.text, b.factual_source)
-                            }
-                          />
-                          <span>{b.text}</span>
-                        </label>
-                        <div className={styles.bulletControls}>
-                          <button
-                            type="button"
-                            className="btn btnSmall"
-                            disabled={idx === 0}
-                            onClick={() => void handleMoveActiveBullet(masterExp.id, idx, -1)}
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btnSmall"
-                            disabled={idx === activeBullets.length - 1}
-                            onClick={() => void handleMoveActiveBullet(masterExp.id, idx, 1)}
-                          >
-                            ↓
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-
-                    {masterExp.bullets
-                      .filter((mb) => !activeIds.has(mb.id))
-                      .slice(0, 14)
-                      .map((mb) => {
-                        const localizedText =
-                          (currentLocale === 'en-US' && mb.translations['en-US']) || mb.text;
-                        return (
-                          <div
-                            key={mb.id}
-                            className={`${styles.bulletCard} ${styles.bulletCardInactive}`}
-                          >
-                            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                              <input
-                                type="checkbox"
-                                checked={false}
-                                onChange={() =>
-                                  void handleToggleBullet(
-                                    masterExp.id,
-                                    mb.id,
-                                    localizedText,
-                                    mb.factual_source
-                                  )
-                                }
-                              />
-                              <span>{localizedText}</span>
-                            </label>
-                            <span className="badge badgeNeutral">{mb.areas.join(', ')}</span>
-                          </div>
-                        );
-                      })}
+                  <div className={styles.accordionActions}>
+                    <button
+                      type="button"
+                      className="iconBtn"
+                      disabled={secIdx === 0}
+                      title="Subir seção"
+                      onClick={() => moveSection(secIdx, -1)}
+                    >
+                      <IconArrowUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="iconBtn"
+                      disabled={secIdx === draft.section_order.length - 1}
+                      title="Descer seção"
+                      onClick={() => moveSection(secIdx, 1)}
+                    >
+                      <IconArrowDown size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="iconBtn"
+                      title="Excluir seção inteira deste currículo"
+                      onClick={() => deleteEntireSection(secKind)}
+                    >
+                      <IconTrash size={14} />
+                    </button>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className={`accordionCollapse ${openSec[secKind] ? 'accordionCollapseOpen' : ''}`}>
+                  <div className="accordionCollapseInner">
+                    <div className={styles.accordionContent}>
+                    {secKind === 'summary' && (
+                      <textarea
+                        rows={4}
+                        className="textarea"
+                        value={draft.summary}
+                        onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
+                      />
+                    )}
+
+                    {secKind === 'experience' &&
+                      draft.experiences.map((exp, eIdx) => (
+                        <div key={exp.id} className={styles.subBlock}>
+                          <div className={styles.subHead}>
+                            <input
+                              className="input"
+                              value={exp.role}
+                              onChange={(e) => {
+                                const next = [...draft.experiences];
+                                next[eIdx] = { ...exp, role: e.target.value };
+                                setDraft({ ...draft, experiences: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="iconBtn"
+                              title="Excluir experiência"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  experiences: draft.experiences.filter((_, i) => i !== eIdx),
+                                })
+                              }
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </div>
+
+                          <div className={styles.grid2}>
+                            <input
+                              className="input"
+                              placeholder="Empresa"
+                              value={exp.company}
+                              onChange={(e) => {
+                                const next = [...draft.experiences];
+                                next[eIdx] = { ...exp, company: e.target.value };
+                                setDraft({ ...draft, experiences: next });
+                              }}
+                            />
+                            <input
+                              className="input"
+                              placeholder="Período"
+                              value={exp.period}
+                              onChange={(e) => {
+                                const next = [...draft.experiences];
+                                next[eIdx] = { ...exp, period: e.target.value };
+                                setDraft({ ...draft, experiences: next });
+                              }}
+                            />
+                          </div>
+
+                          {exp.highlights.map((hl, hIdx) => (
+                            <div key={hIdx} className={styles.bulletRow}>
+                              <textarea
+                                rows={2}
+                                className="textarea"
+                                style={{ minHeight: 58 }}
+                                value={hl}
+                                onChange={(e) => {
+                                  const nextExps = [...draft.experiences];
+                                  const nextHls = [...exp.highlights];
+                                  nextHls[hIdx] = e.target.value;
+                                  nextExps[eIdx] = { ...exp, highlights: nextHls };
+                                  setDraft({ ...draft, experiences: nextExps });
+                                }}
+                              />
+                              <button
+                                type="button"
+                                className="iconBtn"
+                                title="Excluir tópico"
+                                onClick={() => {
+                                  const nextExps = [...draft.experiences];
+                                  nextExps[eIdx] = {
+                                    ...exp,
+                                    highlights: exp.highlights.filter((_, i) => i !== hIdx),
+                                  };
+                                  setDraft({ ...draft, experiences: nextExps });
+                                }}
+                              >
+                                <IconTrash size={14} />
+                              </button>
+                            </div>
+                          ))}
+
+                          <div>
+                            <button
+                              type="button"
+                              className="btnSubtle btnSmall"
+                              onClick={() => {
+                                const nextExps = [...draft.experiences];
+                                nextExps[eIdx] = {
+                                  ...exp,
+                                  highlights: [...exp.highlights, 'Nova entrega realizada.'],
+                                };
+                                setDraft({ ...draft, experiences: nextExps });
+                              }}
+                            >
+                              <IconPlus size={13} />
+                              <span>Adicionar tópico</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                    {secKind === 'education' &&
+                      draft.education.map((edu, idx) => (
+                        <div key={edu.id} className={styles.subBlock}>
+                          <div className={styles.subHead}>
+                            <input
+                              className="input"
+                              value={edu.degree}
+                              onChange={(e) => {
+                                const next = [...draft.education];
+                                next[idx] = { ...edu, degree: e.target.value };
+                                setDraft({ ...draft, education: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="iconBtn"
+                              title="Excluir formação"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  education: draft.education.filter((_, i) => i !== idx),
+                                })
+                              }
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </div>
+                          <div className={styles.grid2}>
+                            <input
+                              className="input"
+                              value={edu.institution}
+                              onChange={(e) => {
+                                const next = [...draft.education];
+                                next[idx] = { ...edu, institution: e.target.value };
+                                setDraft({ ...draft, education: next });
+                              }}
+                            />
+                            <input
+                              className="input"
+                              value={edu.period}
+                              onChange={(e) => {
+                                const next = [...draft.education];
+                                next[idx] = { ...edu, period: e.target.value };
+                                setDraft({ ...draft, education: next });
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+
+                    {secKind === 'projects' &&
+                      draft.projects.map((prj, idx) => (
+                        <div key={prj.id} className={styles.subBlock}>
+                          <div className={styles.subHead}>
+                            <input
+                              className="input"
+                              placeholder="Nome do projeto"
+                              value={prj.name}
+                              onChange={(e) => {
+                                const next = [...draft.projects];
+                                next[idx] = { ...prj, name: e.target.value };
+                                setDraft({ ...draft, projects: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="iconBtn"
+                              title="Excluir projeto"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  projects: draft.projects.filter((_, i) => i !== idx),
+                                })
+                              }
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </div>
+                          <input
+                            className="input"
+                            placeholder="Link opcional (https://)"
+                            value={prj.url ?? ''}
+                            onChange={(e) => {
+                              const next = [...draft.projects];
+                              next[idx] = { ...prj, url: e.target.value.trim() || null };
+                              setDraft({ ...draft, projects: next });
+                            }}
+                          />
+                          <textarea
+                            rows={2}
+                            className="textarea"
+                            style={{ minHeight: 58 }}
+                            placeholder="Descrição do projeto"
+                            value={prj.description}
+                            onChange={(e) => {
+                              const next = [...draft.projects];
+                              next[idx] = { ...prj, description: e.target.value };
+                              setDraft({ ...draft, projects: next });
+                            }}
+                          />
+                        </div>
+                      ))}
+
+                    {secKind === 'courses' &&
+                      draft.courses.map((crs, idx) => (
+                        <div key={crs.id} className={styles.subBlock}>
+                          <div className={styles.subHead}>
+                            <input
+                              className="input"
+                              placeholder="Título do curso ou certificação"
+                              value={crs.title}
+                              onChange={(e) => {
+                                const next = [...draft.courses];
+                                next[idx] = { ...crs, title: e.target.value };
+                                setDraft({ ...draft, courses: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="iconBtn"
+                              title="Excluir curso"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  courses: draft.courses.filter((_, i) => i !== idx),
+                                })
+                              }
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </div>
+                          <input
+                            className="input"
+                            placeholder="Instituição"
+                            value={crs.institution}
+                            onChange={(e) => {
+                              const next = [...draft.courses];
+                              next[idx] = { ...crs, institution: e.target.value };
+                              setDraft({ ...draft, courses: next });
+                            }}
+                          />
+                          <div className={styles.grid2}>
+                            <input
+                              className="input"
+                              placeholder="Carga Horária"
+                              value={crs.workload}
+                              onChange={(e) => {
+                                const next = [...draft.courses];
+                                next[idx] = { ...crs, workload: e.target.value };
+                                setDraft({ ...draft, courses: next });
+                              }}
+                            />
+                            <input
+                              className="input"
+                              placeholder="Conclusão"
+                              value={crs.completion_date}
+                              onChange={(e) => {
+                                const next = [...draft.courses];
+                                next[idx] = { ...crs, completion_date: e.target.value };
+                                setDraft({ ...draft, courses: next });
+                              }}
+                            />
+                          </div>
+                          <input
+                            className="input"
+                            placeholder="Descrição opcional"
+                            value={crs.description}
+                            onChange={(e) => {
+                              const next = [...draft.courses];
+                              next[idx] = { ...crs, description: e.target.value };
+                              setDraft({ ...draft, courses: next });
+                            }}
+                          />
+                        </div>
+                      ))}
+
+                    {secKind === 'skills' &&
+                      draft.skill_groups.map((grp, gIdx) => (
+                        <div key={grp.id} className={styles.subBlock}>
+                          <div className={styles.subHead}>
+                            <input
+                              className="input"
+                              placeholder="Categoria"
+                              value={grp.label}
+                              onChange={(e) => {
+                                const next = [...draft.skill_groups];
+                                next[gIdx] = { ...grp, label: e.target.value };
+                                setDraft({ ...draft, skill_groups: next });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="iconBtn"
+                              title="Excluir grupo de competências"
+                              onClick={() =>
+                                setDraft({
+                                  ...draft,
+                                  skill_groups: draft.skill_groups.filter((_, i) => i !== gIdx),
+                                })
+                              }
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </div>
+                          <input
+                            className="input"
+                            placeholder="Competências separadas por vírgula"
+                            value={grp.items.join(', ')}
+                            onChange={(e) => {
+                              const next = [...draft.skill_groups];
+                              next[gIdx] = {
+                                ...grp,
+                                items: e.target.value
+                                  .split(',')
+                                  .map((s) => s.trim())
+                                  .filter(Boolean),
+                              };
+                              setDraft({ ...draft, skill_groups: next });
+                            }}
+                          />
+                        </div>
+                      ))}
+
+                    {secKind === 'languages' &&
+                      draft.languages.map((lng, idx) => (
+                        <div key={lng.id} className={styles.bulletRow}>
+                          <input
+                            className="input"
+                            value={lng.language}
+                            onChange={(e) => {
+                              const next = [...draft.languages];
+                              next[idx] = { ...lng, language: e.target.value };
+                              setDraft({ ...draft, languages: next });
+                            }}
+                          />
+                          <input
+                            className="input"
+                            value={lng.proficiency}
+                            onChange={(e) => {
+                              const next = [...draft.languages];
+                              next[idx] = { ...lng, proficiency: e.target.value };
+                              setDraft({ ...draft, languages: next });
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="iconBtn"
+                            title="Excluir idioma"
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                languages: draft.languages.filter((_, i) => i !== idx),
+                              })
+                            }
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* RIGHT PANE: LIVE ISOLATED A4 SHEET + OVERFLOW METER */}
-      <div className={styles.previewPane}>
-        <div className={`card ${styles.meterCard}`}>
-          <div className={styles.meterHeader}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <strong>Folha A4 ao Vivo (210 × 297 mm)</strong>
-              <span
-                className={`badge ${
-                  isOverflow ? 'badgeDanger' : fillRatio > 0.92 ? 'badgeWarn' : 'badgeOk'
-                }`}
-              >
+      {/* RIGHT: Live A4 Preview + Download PDF */}
+      <div className={styles.rightColumn}>
+        <div className={`panel ${styles.previewBar}`}>
+          <div className={styles.previewMeta}>
+            <span>Folha A4</span>
+            {draft && (
+              <span>
+                ·{' '}
                 {isOverflow
-                  ? `⚠️ Estouro (~${estimatedPages} pág. / Limite ${maxPages})`
-                  : `✓ ${Math.round(fillRatio * 100)}% do orçamento (${maxPages} pág.)`}
+                  ? `Ajuste automático p/ ${activeMaxPages} pág. ao baixar`
+                  : `Dentro de ${activeMaxPages} página(s)`}
               </span>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span className="fieldLabel">Escala:</span>
-              {[0.65, 0.74, 0.9, 1].map((z) => (
-                <button
-                  key={z}
-                  type="button"
-                  className={`btn btnSmall ${zoom === z ? 'btnPrimary' : ''}`}
-                  onClick={() => setZoom(z)}
-                >
-                  {Math.round(z * 100)}%
-                </button>
-              ))}
-            </div>
+            )}
           </div>
 
-          <div className={styles.meterTrack}>
-            <div
-              className={
-                isOverflow
-                  ? styles.meterFillDanger
-                  : fillRatio > 0.92
-                    ? styles.meterFillWarn
-                    : styles.meterFillOk
-              }
-              style={{ width: `${Math.min(100, Math.round(fillRatio * 100))}%` }}
-            />
+          <div className={styles.zoomRow}>
+            {[0.65, 0.72, 0.88].map((z) => (
+              <button
+                key={z}
+                type="button"
+                className={`btnSubtle btnSmall ${zoom === z ? styles.zoomBtnActive : ''}`}
+                onClick={() => setZoom(z)}
+              >
+                {Math.round(z * 100)}%
+              </button>
+            ))}
+
+            <button
+              type="button"
+              className="btnGhost"
+              disabled={!draft || exporting}
+              onClick={handleExportAndDownload}
+            >
+              <IconDownload size={15} />
+              <span>{exporting ? 'Gerando PDF...' : 'Baixar PDF'}</span>
+            </button>
           </div>
         </div>
 
-        <div className={styles.paperStage}>
-          <div
-            className={styles.paperScaleWrapper}
-            style={{
-              width: `${794 * zoom}px`,
-              height: `${iframeDisplayHeight * zoom}px`,
-            }}
-          >
+        <div className={styles.stage}>
+          {!previewHtml ? (
+            <div className={styles.emptyStage}>
+              Selecione uma vaga ou cole a descrição à esquerda e clique em{' '}
+              <strong>Gerar com IA</strong> para visualizar e editar sua Folha A4 ao vivo.
+            </div>
+          ) : (
             <div
               style={{
-                width: '794px',
-                transform: `scale(${zoom})`,
-                transformOrigin: 'top left',
-                position: 'relative',
+                width: `${794 * zoom}px`,
+                height: `${iframeHeight * zoom}px`,
               }}
             >
-              <iframe
-                ref={iframeRef}
-                title="Pré-visualização A4 Isolada"
-                srcDoc={previewHtml}
-                className={styles.a4Iframe}
-                style={{ height: `${iframeDisplayHeight}px` }}
-                onLoad={measureIframeHeight}
-              />
               <div
-                className={styles.pageBreakMarker}
-                style={{ top: `${maxPages * A4_PAGE_HEIGHT_PX}px` }}
+                style={{
+                  width: '794px',
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'top left',
+                  position: 'relative',
+                }}
               >
-                <span className={styles.pageBreakTag}>
-                  Limite Máximo A4 ({maxPages} {maxPages === 1 ? 'página' : 'páginas'})
-                </span>
+                <iframe
+                  ref={iframeRef}
+                  title="Pré-visualização A4"
+                  srcDoc={previewHtml}
+                  className={styles.a4Iframe}
+                  style={{ height: `${iframeHeight}px` }}
+                  onLoad={measureIframe}
+                />
+                <div
+                  className={styles.pageLimitRule}
+                  style={{ top: `${limitRuleTopPx}px` }}
+                />
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

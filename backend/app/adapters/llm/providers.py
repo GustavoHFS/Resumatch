@@ -1,11 +1,14 @@
-"""Lightweight async LLM adapters (`GeminiAdapter`, `GroqAdapter`, `OllamaAdapter`) via `httpx`.
+"""Exclusive Google Gemini async adapter (`GeminiAdapter`) via lightweight `httpx`.
 
-Zero heavy vendor SDKs. Uses structured JSON outputs, explicit short timeouts, OS truststore
-TLS verification, and strict credential hygiene (keys never appear in URLs, logs, or errors).
+- Zero heavy vendor SDKs; uses OS truststore TLS, header-only secret hygiene (`x-goog-api-key`),
+  and automatic fallback from `gemini-2.5-flash` to `gemini-2.0-flash` if needed.
+- Supports real-time zero-cost key validation (`validate_connection`), block-aware Base Resume
+  extraction (`extract_profile_from_text`), and tailored resume generation (`generate_tailored_resume`).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 from typing import Any, Literal, Protocol
@@ -14,25 +17,15 @@ import httpx
 import truststore
 from pydantic import Field
 
-from app.adapters.llm.pii_stripper import SanitizedSurgicalInput
+from app.adapters.llm.pii_stripper import SanitizedResumeGenInput
 from app.core.config import AppSettings
 from app.models.profile_schema import StrictModel
 
-ProviderName = Literal["gemini", "groq", "ollama"]
+ProviderName = Literal["gemini"]
 
 
 class LlmAdapterError(RuntimeError):
-    """Safe error raised on LLM transport, quota, or schema failures (zero secret leakage)."""
-
-
-class RewrittenBullet(StrictModel):
-    bullet_id: str
-    text: str
-
-
-class SurgicalLlmProposal(StrictModel):
-    summary_text: str
-    bullets: list[RewrittenBullet] = Field(default_factory=list)
+    """Safe error raised on Gemini transport, quota, auth, or schema failures (zero secret leakage)."""
 
 
 class TokenUsage(StrictModel):
@@ -41,10 +34,10 @@ class TokenUsage(StrictModel):
     total_tokens: int = 0
 
 
-class LlmAdapterResponse(StrictModel):
-    provider: ProviderName
+class LlmJsonCallResult(StrictModel):
+    provider: ProviderName = "gemini"
     model: str
-    proposal: SurgicalLlmProposal
+    data: dict[str, Any] = Field(default_factory=dict)
     token_usage: TokenUsage
 
 
@@ -52,48 +45,266 @@ class LLMPort(Protocol):
     provider_name: ProviderName
     model_name: str
 
-    async def adapt_once(self, sanitized: SanitizedSurgicalInput) -> LlmAdapterResponse:
+    async def validate_connection(self) -> str:
+        ...
+
+    async def generate_tailored_resume(
+        self, sanitized: SanitizedResumeGenInput
+    ) -> LlmJsonCallResult:
+        ...
+
+    async def extract_profile_from_text(self, masked_text: str) -> LlmJsonCallResult:
         ...
 
 
-RESPONSE_JSON_SCHEMA: dict[str, Any] = {
-    "type": "OBJECT",
+RESUME_GENERATION_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
     "properties": {
-        "summary_text": {"type": "STRING"},
-        "bullets": {
-            "type": "ARRAY",
+        "target_role": {"type": "string"},
+        "section_order": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "summary": {"type": "string"},
+        "experiences": {
+            "type": "array",
             "items": {
-                "type": "OBJECT",
+                "type": "object",
                 "properties": {
-                    "bullet_id": {"type": "STRING"},
-                    "text": {"type": "STRING"},
+                    "id": {"type": "string"},
+                    "role": {"type": "string"},
+                    "company": {"type": "string"},
+                    "period": {"type": "string"},
+                    "description": {"type": "string"},
+                    "highlights": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["bullet_id", "text"],
+                "required": ["id", "role", "company", "period", "highlights"],
+            },
+        },
+        "education": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "degree": {"type": "string"},
+                    "institution": {"type": "string"},
+                    "period": {"type": "string"},
+                    "details": {"type": "string"},
+                },
+                "required": ["id", "degree", "institution", "period", "details"],
+            },
+        },
+        "courses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "institution": {"type": "string"},
+                    "workload": {"type": "string"},
+                    "completion_date": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["id", "title", "institution", "workload", "completion_date"],
+            },
+        },
+        "projects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "name": {"type": "string"},
+                    "url": {"type": "string"},
+                    "description": {"type": "string"},
+                    "highlights": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "name", "description"],
+            },
+        },
+        "skill_groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "label": {"type": "string"},
+                    "items": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "label", "items"],
+            },
+        },
+        "languages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "language": {"type": "string"},
+                    "proficiency": {"type": "string"},
+                },
+                "required": ["id", "language", "proficiency"],
             },
         },
     },
-    "required": ["summary_text", "bullets"],
+    "required": [
+        "target_role",
+        "section_order",
+        "summary",
+        "experiences",
+        "education",
+        "courses",
+        "projects",
+        "skill_groups",
+        "languages",
+    ],
+}
+
+PROFILE_EXTRACT_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "full_name": {"type": "string"},
+        "city": {"type": "string"},
+        "state": {"type": "string"},
+        "summary": {"type": "string"},
+        "experiences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string"},
+                    "company": {"type": "string"},
+                    "period": {"type": "string"},
+                    "location": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["role", "company", "period", "description"],
+            },
+        },
+        "education": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "degree": {"type": "string"},
+                    "institution": {"type": "string"},
+                    "period": {"type": "string"},
+                    "details": {"type": "string"},
+                },
+                "required": ["degree", "institution", "period", "details"],
+            },
+        },
+        "courses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "institution": {"type": "string"},
+                    "workload": {"type": "string"},
+                    "completion_date": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["title", "institution", "workload", "completion_date", "description"],
+            },
+        },
+        "projects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "url": {"type": "string"},
+                    "description": {"type": "string"},
+                },
+                "required": ["name", "description"],
+            },
+        },
+        "skills": {"type": "array", "items": {"type": "string"}},
+        "languages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string"},
+                    "proficiency": {"type": "string"},
+                },
+                "required": ["language", "proficiency"],
+            },
+        },
+    },
+    "required": [
+        "full_name",
+        "summary",
+        "experiences",
+        "education",
+        "courses",
+        "projects",
+        "skills",
+        "languages",
+    ],
 }
 
 
-def _build_surgical_prompts(sanitized: SanitizedSurgicalInput) -> tuple[str, str]:
-    lang_note = (
-        "Write strictly in natural, confident English (en-US)."
-        if sanitized.locale == "en-US"
-        else "Escreva estritamente em Português do Brasil (pt-BR) natural, direto e confiante."
-    )
+def build_resume_generation_prompts(sanitized: SanitizedResumeGenInput) -> tuple[str, str]:
+    exp_count = len(sanitized.experiences)
+    if sanitized.max_pages == 1:
+        if exp_count <= 2:
+            density_rule = (
+                "DENSIDADE INTELIGENTE (PERFIL JÚNIOR / TRANSIÇÃO COM 1–2 EXPERIÊNCIAS): "
+                "NÃO enxugue excessivamente deixando meia folha A4 vazia! Extraia de 5 a 7 `highlights` ricos e concretos por experiência, "
+                "preservando TODAS as frentes transferíveis do candidato (ex.: atendimento/suporte, administração de acessos, infraestrutura/redes, automação, planilhas/relatórios, dados ou código) "
+                "conectadas à vaga, além de incluir todas as formações, cursos relevantes e de 3 a 5 grupos bem preenchidos em `skill_groups`."
+            )
+        else:
+            density_rule = (
+                "ORÇAMENTO DE 1 PÁGINA A4: selecione de 3 a 5 `highlights` de maior impacto por experiência e priorize os cursos, projetos e competências mais aderentes."
+            )
+    else:
+        density_rule = (
+            "ATÉ 2 PÁGINAS A4 PERMITIDAS: apresente histórico detalhado com `highlights` completos, projetos, cursos e certificações relevantes."
+        )
+
     system_prompt = (
-        "You are a surgical ATS resume copy-editor. Rewrite ONLY the provided summary_text and "
-        "bullets to naturally incorporate the confirmed_job_keywords where accurate.\n"
-        "STRICT RULES:\n"
-        "1. NEVER invent tools, certifications, skills, metrics, numbers, or percentages.\n"
-        "2. NEVER add self-deprecating qualifiers ('básico', 'noções', 'nível inicial', 'basic level', 'beginner').\n"
-        "3. Preserve every placeholder token like [[INST_1]] or [[EMP_1]] verbatim.\n"
-        "4. Keep every bullet_id unchanged and return valid JSON matching `{summary_text, bullets:[{bullet_id, text}]}`.\n"
-        f"5. {lang_note}"
+        "Você é um Estrategista Sênior de Currículos e Sistemas ATS no Brasil (Gupy, Inhire, Empregare, Greenhouse, Workday).\n"
+        "Com base no Currículo Base completo do candidato e nos dados da vaga-alvo, monte um rascunho de currículo personalizado em JSON.\n"
+        "REGRAS ESTRITAS DE FIDELIDADE, ESPELHAMENTO ATS E ESTILO:\n"
+        "1. ESTRUTURA E ORDENAÇÃO: defina `target_role` alinhado ao cargo da vaga (fiel ao nível real do candidato) e ordene `section_order` "
+        "(valores válidos: 'summary', 'experience', 'education', 'projects', 'courses', 'skills', 'languages') colocando os pontos mais fortes primeiro. "
+        "Agrupe as competências reais do candidato em 3 a 5 `skill_groups` claros (`{id, label, items}`).\n"
+        "2. ESPELHAMENTO TERMINOLÓGICO EXATO PARA ATS (SEM INVENÇÃO): quando a vaga pedir um termo equivalente a algo que JÁ CONSTA no Currículo Base "
+        "(ex.: perfil cita 'chamados / Help Desk' e a vaga pede 'Service Desk / atendimento de tickets'; perfil cita 'planilhas de orçamento' e a vaga pede 'controle em Excel'), "
+        "use a terminologia exata da vaga nos `highlights`, no `summary` e em `skill_groups`. JAMAIS invente ferramentas, linguagens, empresas, cargos, certificações ou números inexistentes.\n"
+        "3. TRANSFORMAÇÃO DE EXPERIÊNCIAS E DATAS LIMPAS: converta o texto livre (`description`) de cada experiência em `highlights` objetivos iniciados por substantivo ou verbo de ação concreto "
+        "(deixando `description` como `\"\"` quando preencher `highlights`). Padronize `period` em formato limpo PT-BR (ex.: `Mar/2024 – Set/2024` ou `Jul/2026 – Dez/2028`), sem colar regime de contratação se poluir a data.\n"
+        "4. PROIBIÇÃO DE CLICHÊS DE IA: é ESTRITAMENTE PROIBIDO usar expressões vazias ou robóticas como 'altamente motivado', 'apaixonado por tecnologia', "
+        "'proativo e dinâmico', 'sinergia', 'focado em resultados', 'mentalidade ágil', 'busca incessante' ou elogios genéricos sem fato concreto.\n"
+        "5. PRIVACIDADE E PLACEHOLDERS: preserve todos os tokens `[[EMP_1]]`, `[[INST_1]]`, `[[URL_1]]` EXATAMENTE como recebidos "
+        "(em `company`, repasse `company_token` literalmente; em `institution`, repasse `institution_token` literalmente).\n"
+        f"6. {density_rule}\n"
+        "7. Escreva 100% em Português do Brasil (pt-BR) natural, direto e técnico.\n"
+        "Retorne APENAS JSON válido seguindo o schema solicitado."
     )
-    user_payload = json.dumps(sanitized.model_dump(mode="json"), ensure_ascii=False)
-    return system_prompt, user_payload
+    user_json = json.dumps(sanitized.model_dump(mode="json"), ensure_ascii=False)
+    return system_prompt, user_json
+
+
+def build_profile_extraction_prompts(masked_text: str) -> tuple[str, str]:
+    system_prompt = (
+        "Você é um extrator especialista de currículos brasileiros. Analise o documento por BLOCOS VISUAIS E SEMÂNTICOS de linhas próximas, nunca preenchendo campos às cegas.\n"
+        "REGRAS OBRIGATÓRIAS DE AGRUPAMENTO:\n"
+        "1. FORMAÇÃO (`education`): identifique cada bloco completo vinculando Grau + Instituição + Período no MESMO registro.\n"
+        "   - Reconheça graus como `Graduação em...`, `Bacharelado`, `Tecnólogo`, `Licenciatura`, `Curso Técnico em...`, `Especialização`, incluindo status como `- Em andamento`.\n"
+        "   - Reconheça siglas e instituições brasileiras como `UNICAP`, `UNINTER`, `UNINASSAU`, `UFPE`, `UFRPE`, `IFPE`, `ETEMAC`, `SENAI`, `SENAC`, `FIAP`, `Universidade`, `Centro Universitário`, `Faculdade`, `Escola Técnica`, preservando complementos como `(via Embarque Digital)` em `details` ou junto à instituição.\n"
+        "   - Capture períodos completos como `Início: Jul/2026 · Previsão de conclusão: Dez/2028`, `Concluído em Dez/2025` ou `MM/AAAA` em `period`.\n"
+        "2. EXPERIÊNCIAS (`experiences`): agrupe Cargo (`role`), Empresa (`company`), Vínculo/Período (`period`) e consolide integralmente todas as atividades daquela função num único texto corrido coeso em `description`.\n"
+        "3. CURSOS E CERTIFICAÇÕES (`courses`): separe corretamente `title` (Título), `institution` (Instituição), `workload` (Carga Horária em horas, ex: `40 horas`), `completion_date` (Conclusão, ex: `2026` ou `Out/2026`) e `description` (descrição prática ou conteúdo).\n"
+        "4. PROJETOS (`projects`): extraia apenas `name`, `url` (se houver) e `description`.\n"
+        "5. Preserve todos os placeholders `[[EMAIL_1]]`, `[[PHONE_1]]` ou `[[URL_1]]` literalmente e não invente fatos ausentes no texto."
+    )
+    return system_prompt, masked_text[:60000]
 
 
 def _make_http_client(
@@ -107,16 +318,18 @@ def _make_http_client(
     return httpx.AsyncClient(verify=ssl_ctx, timeout=timeout, follow_redirects=False)
 
 
-def _parse_proposal_json(raw_text: str, provider: str) -> SurgicalLlmProposal:
+def _parse_json_dict(raw_text: str) -> dict[str, Any]:
     cleaned = raw_text.strip()
     if cleaned.startswith("```"):
         lines = [ln for ln in cleaned.splitlines() if not ln.strip().startswith("```")]
         cleaned = "\n".join(lines).strip()
     try:
         parsed = json.loads(cleaned)
-        return SurgicalLlmProposal.model_validate(parsed)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected JSON object")
+        return parsed
     except Exception as exc:
-        raise LlmAdapterError(f"{provider} returned malformed structured JSON output.") from exc
+        raise LlmAdapterError("A resposta da IA do Google veio em formato inesperado. Tente novamente.") from exc
 
 
 class GeminiAdapter:
@@ -126,46 +339,116 @@ class GeminiAdapter:
         self,
         api_key: str,
         model: str = "gemini-2.5-flash",
-        timeout_seconds: float = 15.0,
+        fallback_model: str = "gemini-2.0-flash",
+        timeout_seconds: float = 25.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if not api_key.strip():
-            raise LlmAdapterError("GEMINI_API_KEY is not configured.")
+            raise LlmAdapterError(
+                "Conecte sua chave gratuita do Google para gerar currículos personalizados."
+            )
         self._api_key = api_key.strip()
         self.model_name = model
+        self._fallback_model = fallback_model
         self._timeout = timeout_seconds
         self._transport = transport
 
-    async def adapt_once(self, sanitized: SanitizedSurgicalInput) -> LlmAdapterResponse:
-        sys_prompt, user_json = _build_surgical_prompts(sanitized)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
+    async def validate_connection(self) -> str:
+        """Validates the Google AI Studio key in real time with zero token cost."""
+        models_to_try = list(dict.fromkeys([self.model_name, self._fallback_model]))
+        async with _make_http_client(min(8.0, self._timeout), self._transport) as client:
+            last_status = 0
+            for candidate_model in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}"
+                try:
+                    res = await client.get(url, headers={"x-goog-api-key": self._api_key})
+                except httpx.HTTPError as exc:
+                    raise LlmAdapterError(
+                        f"Não foi possível conectar ao Google no momento ({type(exc).__name__})."
+                    ) from exc
+
+                last_status = res.status_code
+                if res.status_code == 200:
+                    return candidate_model
+                if res.status_code in {400, 401, 403}:
+                    raise LlmAdapterError(
+                        "Chave do Google inválida. Copie a chave completa gerada no Google AI Studio."
+                    )
+
+        raise LlmAdapterError(f"Serviço do Google retornou código {last_status} ao validar a chave.")
+
+    async def _call_structured(
+        self, sys_prompt: str, user_text: str, schema: dict[str, Any]
+    ) -> LlmJsonCallResult:
+        models_to_try = list(dict.fromkeys([self.model_name, self._fallback_model]))
         body = {
             "systemInstruction": {"parts": [{"text": sys_prompt}]},
-            "contents": [{"role": "user", "parts": [{"text": user_json}]}],
+            "contents": [{"role": "user", "parts": [{"text": user_text}]}],
             "generationConfig": {
                 "temperature": 0.2,
+                "maxOutputTokens": 8192,
                 "responseMimeType": "application/json",
-                "responseSchema": RESPONSE_JSON_SCHEMA,
+                "responseJsonSchema": schema,
             },
         }
-        async with _make_http_client(self._timeout, self._transport) as client:
-            try:
-                res = await client.post(
-                    url,
-                    json=body,
-                    headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
-                )
-            except httpx.HTTPError as exc:
-                raise LlmAdapterError(f"Gemini request failed: {type(exc).__name__}") from exc
+        res: httpx.Response | None = None
+        used_model = self.model_name
+        retry_delay = 0.02 if self._transport is not None else 1.2
 
+        async with _make_http_client(self._timeout, self._transport) as client:
+            for idx, candidate_model in enumerate(models_to_try):
+                used_model = candidate_model
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
+
+                # Up to 2 attempts on primary model for transient 429/503, then automatic fallback to gemini-2.0-flash!
+                max_attempts = 2 if idx == 0 else 1
+                for attempt in range(max_attempts):
+                    try:
+                        res = await client.post(
+                            url,
+                            json=body,
+                            headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
+                        )
+                    except httpx.HTTPError as exc:
+                        if attempt + 1 < max_attempts:
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        raise LlmAdapterError(
+                            f"Falha de rede ao comunicar com o Google ({type(exc).__name__})."
+                        ) from exc
+
+                    if res.status_code in {429, 503} and attempt + 1 < max_attempts:
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    break
+
+                assert res is not None
+                if res.status_code in {404, 429, 503} and idx + 1 < len(models_to_try):
+                    continue
+                break
+
+        assert res is not None
+        if res.status_code in {400, 401, 403}:
+            raise LlmAdapterError("Chave do Google inválida ou sem permissão. Reconecte nas Configurações.")
+        if res.status_code == 429:
+            raise LlmAdapterError("Limite temporário gratuito do Google atingido. Aguarde alguns segundos.")
+        if res.status_code == 503:
+            raise LlmAdapterError("O servidor do Google está temporariamente sobrecarregado. Tente novamente em instantes.")
         if res.status_code != 200:
-            raise LlmAdapterError(f"Gemini API returned HTTP {res.status_code}.")
+            raise LlmAdapterError(f"A API do Google retornou erro HTTP {res.status_code}.")
 
         data = res.json()
         try:
-            text_out = data["candidates"][0]["content"]["parts"][0]["text"]
+            candidate_obj = data["candidates"][0]
+            if candidate_obj.get("finishReason") == "MAX_TOKENS":
+                raise LlmAdapterError(
+                    "O rascunho excedeu o tamanho máximo de resposta da IA. Tente resumir a descrição ou usar 1 página."
+                )
+            text_out = candidate_obj["content"]["parts"][0]["text"]
+        except LlmAdapterError:
+            raise
         except (KeyError, IndexError, TypeError) as exc:
-            raise LlmAdapterError("Gemini response missing candidate text content.") from exc
+            raise LlmAdapterError("A resposta do Google veio vazia.") from exc
 
         usage_meta = data.get("usageMetadata") or {}
         usage = TokenUsage(
@@ -173,187 +456,32 @@ class GeminiAdapter:
             completion_tokens=int(usage_meta.get("candidatesTokenCount") or 0),
             total_tokens=int(usage_meta.get("totalTokenCount") or 0),
         )
-        proposal = _parse_proposal_json(text_out, "Gemini")
-        return LlmAdapterResponse(
+        return LlmJsonCallResult(
             provider="gemini",
-            model=self.model_name,
-            proposal=proposal,
+            model=used_model,
+            data=_parse_json_dict(text_out),
             token_usage=usage,
         )
 
+    async def generate_tailored_resume(
+        self, sanitized: SanitizedResumeGenInput
+    ) -> LlmJsonCallResult:
+        sys_prompt, user_json = build_resume_generation_prompts(sanitized)
+        return await self._call_structured(sys_prompt, user_json, RESUME_GENERATION_JSON_SCHEMA)
 
-class GroqAdapter:
-    provider_name: ProviderName = "groq"
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str = "llama-3.3-70b-versatile",
-        timeout_seconds: float = 15.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        if not api_key.strip():
-            raise LlmAdapterError("GROQ_API_KEY is not configured.")
-        self._api_key = api_key.strip()
-        self.model_name = model
-        self._timeout = timeout_seconds
-        self._transport = transport
-
-    async def adapt_once(self, sanitized: SanitizedSurgicalInput) -> LlmAdapterResponse:
-        sys_prompt, user_json = _build_surgical_prompts(sanitized)
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        body = {
-            "model": self.model_name,
-            "temperature": 0.2,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_json},
-            ],
-        }
-        async with _make_http_client(self._timeout, self._transport) as client:
-            try:
-                res = await client.post(
-                    url,
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-            except httpx.HTTPError as exc:
-                raise LlmAdapterError(f"Groq request failed: {type(exc).__name__}") from exc
-
-        if res.status_code != 200:
-            raise LlmAdapterError(f"Groq API returned HTTP {res.status_code}.")
-
-        data = res.json()
-        try:
-            text_out = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise LlmAdapterError("Groq response missing choice message content.") from exc
-
-        raw_usage = data.get("usage") or {}
-        usage = TokenUsage(
-            prompt_tokens=int(raw_usage.get("prompt_tokens") or 0),
-            completion_tokens=int(raw_usage.get("completion_tokens") or 0),
-            total_tokens=int(raw_usage.get("total_tokens") or 0),
-        )
-        proposal = _parse_proposal_json(text_out, "Groq")
-        return LlmAdapterResponse(
-            provider="groq",
-            model=self.model_name,
-            proposal=proposal,
-            token_usage=usage,
-        )
-
-
-class OllamaAdapter:
-    provider_name: ProviderName = "ollama"
-
-    def __init__(
-        self,
-        base_url: str = "http://127.0.0.1:11434",
-        model: str = "llama3.2",
-        timeout_seconds: float = 20.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        self._base_url = base_url.rstrip("/")
-        self.model_name = model
-        self._timeout = timeout_seconds
-        self._transport = transport
-
-    async def adapt_once(self, sanitized: SanitizedSurgicalInput) -> LlmAdapterResponse:
-        sys_prompt, user_json = _build_surgical_prompts(sanitized)
-        url = f"{self._base_url}/api/chat"
-        schema = {
-            "type": "object",
-            "properties": {
-                "summary_text": {"type": "string"},
-                "bullets": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "bullet_id": {"type": "string"},
-                            "text": {"type": "string"},
-                        },
-                        "required": ["bullet_id", "text"],
-                    },
-                },
-            },
-            "required": ["summary_text", "bullets"],
-        }
-        body = {
-            "model": self.model_name,
-            "stream": False,
-            "format": schema,
-            "options": {"temperature": 0.2},
-            "messages": [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_json},
-            ],
-        }
-        async with _make_http_client(self._timeout, self._transport) as client:
-            try:
-                res = await client.post(url, json=body)
-            except httpx.HTTPError as exc:
-                raise LlmAdapterError(f"Ollama local request failed: {type(exc).__name__}") from exc
-
-        if res.status_code != 200:
-            raise LlmAdapterError(f"Ollama API returned HTTP {res.status_code}.")
-
-        data = res.json()
-        try:
-            text_out = data["message"]["content"]
-        except (KeyError, TypeError) as exc:
-            raise LlmAdapterError("Ollama response missing message content.") from exc
-
-        p_tok = int(data.get("prompt_eval_count") or 0)
-        c_tok = int(data.get("eval_count") or 0)
-        usage = TokenUsage(
-            prompt_tokens=p_tok,
-            completion_tokens=c_tok,
-            total_tokens=p_tok + c_tok,
-        )
-        proposal = _parse_proposal_json(text_out, "Ollama")
-        return LlmAdapterResponse(
-            provider="ollama",
-            model=self.model_name,
-            proposal=proposal,
-            token_usage=usage,
-        )
+    async def extract_profile_from_text(self, masked_text: str) -> LlmJsonCallResult:
+        sys_prompt, user_text = build_profile_extraction_prompts(masked_text)
+        return await self._call_structured(sys_prompt, user_text, PROFILE_EXTRACT_JSON_SCHEMA)
 
 
 def build_llm_adapter(
     settings: AppSettings,
-    provider_override: ProviderName | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
-) -> LLMPort:
-    chosen = provider_override or settings.llm_provider
-    if chosen == "none":
-        raise LlmAdapterError(
-            "Surgical AI mode is disabled (LLM_PROVIDER='none'). Choose 'gemini', 'groq', or 'ollama'."
-        )
-    if chosen == "gemini":
-        return GeminiAdapter(
-            api_key=settings.gemini_api_key,
-            model=settings.gemini_model,
-            timeout_seconds=settings.llm_timeout_seconds,
-            transport=transport,
-        )
-    if chosen == "groq":
-        return GroqAdapter(
-            api_key=settings.groq_api_key,
-            model=settings.groq_model,
-            timeout_seconds=settings.llm_timeout_seconds,
-            transport=transport,
-        )
-    if chosen == "ollama":
-        return OllamaAdapter(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
-            timeout_seconds=settings.llm_timeout_seconds,
-            transport=transport,
-        )
-    raise LlmAdapterError(f"Unsupported LLM provider '{chosen}'.")
+) -> GeminiAdapter:
+    return GeminiAdapter(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+        fallback_model=settings.gemini_fallback_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+        transport=transport,
+    )

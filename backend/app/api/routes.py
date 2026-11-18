@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import Field, ValidationError
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, text
 from sqlmodel import Session, select
 
+from app.adapters.llm.providers import GeminiAdapter, LlmAdapterError
 from app.core.config import AppSettings
 from app.core.database import get_db_session
 from app.models import (
@@ -25,45 +27,38 @@ from app.models import (
 )
 from app.models.profile_schema import StrictModel
 from app.services.config_service import atomic_write_validated_json
+from app.services.profile_import_service import (
+    ProfileImportError,
+    import_profile_from_uploaded_file,
+)
 
 router = APIRouter(prefix="/api", tags=["core"])
 
 
-class LlmSettingsUpdateRequest(StrictModel):
-    provider: Literal["none", "gemini", "groq", "ollama"]
-    timeout_seconds: float = Field(default=15.0, ge=3.0, le=120.0)
-    gemini_model: str = Field(default="gemini-2.5-flash", min_length=2, max_length=120)
-    gemini_api_key: str | None = Field(default=None, max_length=300)
-    clear_gemini_key: bool = False
-    groq_model: str = Field(default="llama-3.3-70b-versatile", min_length=2, max_length=120)
-    groq_api_key: str | None = Field(default=None, max_length=300)
-    clear_groq_key: bool = False
-    ollama_base_url: str = Field(default="http://127.0.0.1:11434", min_length=8, max_length=200)
-    ollama_model: str = Field(default="llama3.2", min_length=2, max_length=120)
+class GoogleConnectRequest(StrictModel):
+    api_key: str = Field(min_length=10, max_length=300)
 
 
-class PersistedLlmSettings(StrictModel):
-    provider: Literal["none", "gemini", "groq", "ollama"] = "none"
-    timeout_seconds: float = 15.0
-    gemini_model: str = "gemini-2.5-flash"
+class LifecyclePingRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    client_id: str = Field(default="default", min_length=1, max_length=120)
+
+
+class PersistedLlmSettings(BaseModel):
+    """Tolerates legacy fields via extra='ignore' while persisting only Google Gemini config."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
     gemini_api_key: str = ""
-    groq_model: str = "llama-3.3-70b-versatile"
-    groq_api_key: str = ""
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "llama3.2"
+    gemini_model: str = "gemini-2.5-flash"
 
 
 def serialize_masked_llm_settings(settings: AppSettings) -> dict[str, Any]:
-    """Serializes active LLM settings without ever exposing raw API keys."""
+    """Serializes Google connection status without ever exposing the raw key."""
     return {
-        "provider": settings.llm_provider,
-        "timeout_seconds": settings.llm_timeout_seconds,
-        "gemini_model": settings.gemini_model,
-        "gemini_key_configured": bool(settings.gemini_api_key.strip()),
-        "groq_model": settings.groq_model,
-        "groq_key_configured": bool(settings.groq_api_key.strip()),
-        "ollama_base_url": settings.ollama_base_url,
-        "ollama_model": settings.ollama_model,
+        "connected": settings.ai_connected,
+        "model": settings.gemini_model,
     }
 
 
@@ -115,7 +110,7 @@ def health_check(
         "version": settings.version,
         "sqlite_journal_mode": journal_mode,
         "scheduler_enabled": settings.scheduler_enabled,
-        "llm_provider": settings.llm_provider,
+        "ai_connected": settings.ai_connected,
         "bootstrapped_demo": bool(getattr(request.app.state, "bootstrapped_demo", False)),
         "counts": {
             "opportunities": opportunities_count,
@@ -149,6 +144,25 @@ def update_master_profile(
         "backup_snapshot": backup_name,
         "profile": payload.model_dump(mode="json"),
     }
+
+
+@router.post("/profile/import-file")
+async def import_master_profile_file(
+    request: Request,
+    file: UploadFile = File(...),
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    llm_transport = getattr(request.app.state, "llm_transport", None)
+    raw_bytes = await file.read()
+    try:
+        return await import_profile_from_uploaded_file(
+            filename=file.filename or "",
+            raw_bytes=raw_bytes,
+            settings=settings,
+            llm_transport=llm_transport,
+        )
+    except ProfileImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/config/criteria", response_model=SearchCriteria)
@@ -237,32 +251,29 @@ def read_llm_settings(
     return serialize_masked_llm_settings(settings)
 
 
-@router.put("/config/llm")
-def update_llm_settings(
-    payload: LlmSettingsUpdateRequest,
+@router.post("/config/llm/connect")
+async def connect_google_ai(
+    request: Request,
+    payload: GoogleConnectRequest,
     settings: AppSettings = Depends(get_app_settings),
 ) -> dict[str, Any]:
-    new_gemini_key = settings.gemini_api_key
-    if payload.clear_gemini_key:
-        new_gemini_key = ""
-    elif payload.gemini_api_key is not None and payload.gemini_api_key.strip():
-        new_gemini_key = payload.gemini_api_key.strip()
-
-    new_groq_key = settings.groq_api_key
-    if payload.clear_groq_key:
-        new_groq_key = ""
-    elif payload.groq_api_key is not None and payload.groq_api_key.strip():
-        new_groq_key = payload.groq_api_key.strip()
+    candidate_key = payload.api_key.strip()
+    llm_transport = getattr(request.app.state, "llm_transport", None)
+    adapter = GeminiAdapter(
+        api_key=candidate_key,
+        model=settings.gemini_model,
+        fallback_model=settings.gemini_fallback_model,
+        timeout_seconds=settings.llm_timeout_seconds,
+        transport=llm_transport,
+    )
+    try:
+        verified_model = await adapter.validate_connection()
+    except LlmAdapterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     persisted = PersistedLlmSettings(
-        provider=payload.provider,
-        timeout_seconds=payload.timeout_seconds,
-        gemini_model=payload.gemini_model,
-        gemini_api_key=new_gemini_key,
-        groq_model=payload.groq_model,
-        groq_api_key=new_groq_key,
-        ollama_base_url=payload.ollama_base_url,
-        ollama_model=payload.ollama_model,
+        gemini_api_key=candidate_key,
+        gemini_model=verified_model,
     )
     backup_name = atomic_write_validated_json(
         target_path=settings.llm_settings_path,
@@ -270,18 +281,100 @@ def update_llm_settings(
         backups_dir=settings.backups_dir,
         max_backups=settings.max_config_backups,
     )
-
-    settings.llm_provider = persisted.provider
-    settings.llm_timeout_seconds = persisted.timeout_seconds
-    settings.gemini_model = persisted.gemini_model
-    settings.gemini_api_key = persisted.gemini_api_key
-    settings.groq_model = persisted.groq_model
-    settings.groq_api_key = persisted.groq_api_key
-    settings.ollama_base_url = persisted.ollama_base_url
-    settings.ollama_model = persisted.ollama_model
+    settings.gemini_api_key = candidate_key
+    settings.gemini_model = verified_model
 
     return {
-        "status": "updated",
+        "status": "connected",
         "backup_snapshot": backup_name,
         "llm": serialize_masked_llm_settings(settings),
+    }
+
+
+@router.delete("/config/llm")
+def disconnect_google_ai(
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    persisted = PersistedLlmSettings(
+        gemini_api_key="",
+        gemini_model=settings.gemini_model,
+    )
+    atomic_write_validated_json(
+        target_path=settings.llm_settings_path,
+        validated_model=persisted,
+        backups_dir=settings.backups_dir,
+        max_backups=settings.max_config_backups,
+    )
+    settings.gemini_api_key = ""
+    return {
+        "status": "disconnected",
+        "llm": serialize_masked_llm_settings(settings),
+    }
+
+
+def _get_lifecycle_state(request: Request) -> dict[str, Any]:
+    state = getattr(request.app.state, "lifecycle", None)
+    if state is None:
+        state = {
+            "active_clients": {},
+            "ever_connected": False,
+            "last_seen_at": None,
+            "closed_signal": False,
+        }
+        request.app.state.lifecycle = state
+    return state
+
+
+@router.post("/lifecycle/ping")
+def lifecycle_ping(
+    request: Request,
+    payload: LifecyclePingRequest | None = None,
+) -> dict[str, Any]:
+    state = _get_lifecycle_state(request)
+    cid = (payload.client_id if payload else "default").strip() or "default"
+    now = time.monotonic()
+    active: dict[str, float] = state["active_clients"]
+    active[cid] = now
+    # Prune stale tabs older than 15s
+    for k in [k for k, ts in active.items() if now - ts > 15.0]:
+        active.pop(k, None)
+    state["ever_connected"] = True
+    state["last_seen_at"] = now
+    state["closed_signal"] = False
+    return {"status": "ok", "active_clients": len(active)}
+
+
+@router.post("/lifecycle/close")
+async def lifecycle_close(request: Request) -> dict[str, Any]:
+    state = _get_lifecycle_state(request)
+    cid = "default"
+    try:
+        raw_body = await request.body()
+        if raw_body:
+            parsed = json.loads(raw_body.decode("utf-8", errors="replace"))
+            if isinstance(parsed, dict) and parsed.get("client_id"):
+                cid = str(parsed["client_id"]).strip()
+    except Exception:
+        pass
+    active: dict[str, float] = state["active_clients"]
+    active.pop(cid, None)
+    if not active:
+        state["closed_signal"] = True
+    return {"status": "closing", "active_clients": len(active)}
+
+
+@router.get("/lifecycle/status")
+def lifecycle_status(request: Request) -> dict[str, Any]:
+    state = _get_lifecycle_state(request)
+    now = time.monotonic()
+    active: dict[str, float] = state["active_clients"]
+    for k in [k for k, ts in active.items() if now - ts > 15.0]:
+        active.pop(k, None)
+    last_seen = state.get("last_seen_at")
+    seconds_since = round(now - last_seen, 2) if isinstance(last_seen, (int, float)) else None
+    return {
+        "ever_connected": bool(state["ever_connected"]),
+        "active_clients": len(active),
+        "seconds_since_last_seen": seconds_since,
+        "closed_signal": bool(state["closed_signal"]),
     }

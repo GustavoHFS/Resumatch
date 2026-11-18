@@ -1,137 +1,193 @@
-# Resumatch
+<div align="center">
 
-> **Idioma / Language:** **English** | [Português (Brasil)](./README.pt-BR.md)
+# 🎯 Resumatch `v2.1`
 
-**Resumatch** is a local-first, privacy-hardened job discovery, deterministic 3-axis triage, and hybrid ATS-clean A4 resume studio built with **FastAPI**, **SQLModel (SQLite WAL)**, **Pydantic v2**, **Playwright Headless Chromium**, and **React + TypeScript + Pure Vanilla CSS**.
+**Estúdio Local de Busca de Vagas, Adaptação Inteligente de Currículos A4 (ATS) e Gestão de Candidaturas**
 
-Designed to eliminate prompt-driven manual `.docx` editing and token-heavy LLM pipelines, Resumatch runs **95%+ of its core intelligence with Zero AI** while offering an optional single-shot **Surgical AI** fine-tuning mode guarded by reversible PII masking and post-LLM veracity verification.
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Backend_Ass%C3%ADncrono-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![SQLite WAL](https://img.shields.io/badge/SQLite_WAL-SQLModel-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlmodel.tiangolo.com/)
+[![React + TypeScript](https://img.shields.io/badge/React_18-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://react.dev/)
+[![Vanilla CSS](https://img.shields.io/badge/Estilo-100%25_Vanilla_CSS-1572B6?style=flat-square&logo=css3&logoColor=white)](#)
+[![Playwright PDF](https://img.shields.io/badge/PDF_A4-Chromium_%2B_pypdf-2EAD33?style=flat-square&logo=googlechrome&logoColor=white)](https://playwright.dev/)
+[![Docker Ready](https://img.shields.io/badge/Docker-1_Comando-2496ED?style=flat-square&logo=docker&logoColor=white)](./Dockerfile)
+[![Licença MIT](https://img.shields.io/badge/Licen%C3%A7a-MIT-111827?style=flat-square)](#)
+
+<p align="center">
+  <em>Transforme um único Currículo Base em documentos A4 limpos, fiéis à sua trajetória real e sob medida para cada vaga — rodando 100% na sua máquina, com privacidade absoluta.</em>
+</p>
+
+</div>
 
 ---
 
-## Architectural Highlights
+## 💡 Por que o Resumatch existe?
+
+Quem busca recolocação ou início de carreira costuma enfrentar dois extremos ruins: manter dezenas de arquivos `.docx` manuais espalhados em pastas **ou** recorrer a ferramentas online que desconfiguram o layout, expõem dados pessoais sensíveis e inventam experiências.
+
+O **Resumatch v2.1** resolve esse fluxo de ponta a ponta em um único aplicativo desktop/web local:
+
+| Para quem analisa (RH & Recrutadores) 🤝 | Para quem desenvolve (Engenharia de Software) ⚙️ |
+| :--- | :--- |
+| **Zero envios robóticos em massa (Spam):** o sistema nunca preenche formulários às cegas; toda candidatura exige revisão e confirmação humana. | **Arquitetura desacoplada e enxuta:** Backend assíncrono em `FastAPI` + `Pydantic v2` servindo uma SPA em `React + TypeScript + Vanilla CSS` em processo único. |
+| **Fidelidade factual rigorosa:** a IA apenas seleciona, prioriza e redige melhor o que já existe no Currículo Base do candidato — sem inventar empresas ou cargos. | **Privacidade por Design (`PIIStripper`):** nome, telefone, e-mail, links e empresas são mascarados localmente antes de qualquer chamada externa de IA e reidratados no retorno. |
+| **PDF A4 limpo para sistemas ATS:** coluna única semântica, fontes embutidas offline e links clicáveis verificados automaticamente após cada exportação. | **Qualidade auditável:** persistência `SQLite WAL`, validação pós-renderização via `pypdf` (`SHA-256`) e *hook* `pre-commit` bloqueando vazamento de dados pessoais no Git. |
+
+---
+
+## ✨ Como Funciona na Prática (Fluxo em 4 Passos)
+
+1. **📄 Monte ou Importe seu Currículo Base Único:**
+   Envie seu currículo atual em **`.pdf` ou `.docx`** (preenchimento automático da estrutura) ou escreva livremente todo o seu histórico em um único lugar — sem precisar fatiar versões por área.
+2. **🔎 Descubra ou Cole uma Vaga:**
+   Busque oportunidades em fontes públicas `HTTPS` com triagem automática em português claro (compatibilidade, modalidade, localização e canal de envio) ou cole a descrição de qualquer vaga.
+3. **🪄 Gere e Edite o Currículo Sob Medida:**
+   Com 1 clique, a IA analisa seu Currículo Base completo diante da vaga, prioriza as seções mais fortes e adapta as descrições destacando suas entregas relevantes. Você visualiza a **Folha A4 ao vivo**, edita qualquer texto ou exclui qualquer item antes de finalizar.
+4. **📑 Exporte o PDF A4 Auditado e Acompanhe no Kanban:**
+   Exporte um PDF A4 impecável (1 ou 2 páginas com ajuste automático de cabimento) e acompanhe cada etapa no quadro Kanban até a confirmação de envio manual.
+
+---
+
+## 🏗️ Arquitetura do Sistema (`v2.1`)
 
 ```mermaid
 flowchart LR
-    subgraph Discovery["1. Zero-AI Discovery & Triage"]
-        SRC["HTTPS Connectors\n(RSS, Sitemap/JSON-LD,\nGreenhouse, Lever, MCP)"] --> TRI["DeterministicTriageEngine\n(3 Independent Axes)"]
-        IMP["Assisted Manual Import\n(Tier 2 & Tier 3 Portals)"] --> TRI
+    subgraph Base["1. Currículo Base Único"]
+        UP["Upload .PDF / .DOCX\n(Agrupamento Inteligente)"] --> MP["MasterProfile v2.1\n(JSON Validado Pydantic)"]
+    end
+
+    subgraph Vagas["2. Descoberta & Triagem (14 Dias)"]
+        CON["Conectores HTTPS\n(Gupy, LinkedIn, GitHub BR,\nPorto Digital, Empregare)"] --> TRI["Motor Determinístico\n(Deduplicação + Ordenação Recente)"]
         TRI --> DB[("SQLite WAL\napp.sqlite3")]
     end
 
-    subgraph Studio["2. Hybrid Resume Engine"]
-        PROF["MasterProfile JSON\n(Pydantic v2 Validated)"] --> COMP["DeterministicResumeComposer\n(< 20ms, Zero AI)"]
-        DB --> COMP
-        COMP --> STRIP["PIIStripper\n(Masks Header & Institutions)"]
-        STRIP -. "Optional 1-Shot" .-> LLM["LLMPort\n(Gemini / Groq / Ollama)"]
-        LLM -.-> GUARD["VeracityGuard\n(Granular Block Fallback + Diff)"]
+    subgraph Estudio["3. Estúdio A4 via Google Gemini"]
+        MP --> MASK["PIIStripper\n(Mascara Contatos e Empresas)"]
+        DB --> MASK
+        MASK --> LLM["Google Gemini\n(httpx leve + JSON Schema)"]
+        LLM --> DRAFT["ResumeDraft Editável\n(Reidratado Localmente)"]
     end
 
-    subgraph Export["3. Offline A4 ATS Pipeline"]
-        COMP --> HTML["Semantic HTML5 +\nPure @page A4 CSS\n(Offline WOFF2 Fonts)"]
-        GUARD --> HTML
-        HTML --> PDF["Lazy Chromium PDF +\nAuto-Fit Budget"]
-        PDF --> ATS["pypdf ATS Validator\n+ SHA-256 Audit"]
+    subgraph Export["4. Pipeline PDF A4 & Kanban"]
+        DRAFT --> HTML["HTML5 Semântico +\nVanilla CSS @page A4"]
+        HTML --> PDF["Chromium Headless +\nAuto-Fit de Páginas"]
+        PDF --> QA["Validador ATS (pypdf)\n+ Hash SHA-256 no Kanban"]
     end
-```
-
-### 1. Unified 3-Axis Deterministic Triage Engine (Zero AI)
-Every discovered or manually imported job opportunity is evaluated locally in milliseconds across three orthogonal axes:
-- **Axis 1 — Professional Compatibility:** Lexical skill extraction with section-aware mandatory vs. desirable detection, negation parsing, career-tier signals, geography rules, daytime schedule bounds, contract policy, and private employer blocklist matching. Maps skills against four veracity states: `confirmed_practice`, `academic_foundation`, `preparable_gap` (attaches internal `study_plan` cards for interview prep), and `unconfirmed`.
-- **Axis 2 — Operational Status & Omissions:** Separates concrete incompatibilities from operational omissions (e.g., undisclosed salary or hybrid details), never blocking local resume preparation due to missing metadata.
-- **Axis 3 — Ethical Automation Tiers (1 / 2 / 3):** Classifies each vacancy into Tier 1 (public discovery & direct channel), Tier 2 (local assisted preparation), or Tier 3 (authenticated ATS portals), strictly prohibiting blind automated form submissions or anti-bot/CAPTCHA bypassing.
-
-### 2. Hybrid Resume Studio (`Deterministic` + `Surgical AI`)
-- **Deterministic Mode (`< 20ms`, Zero Tokens):** Scores and selects verified bullets, skill groups, courses, and localized summaries (`pt-BR` and `en-US`, including `suporte-en`) from `MasterProfile` presets, applying audited contextual equivalences and dynamic section ordering.
-- **Surgical AI Mode (Single-Shot + Zero PII):**
-  - **`PIIStripper`:** Strips candidate `header` (name, email, phone, location, links) and `blocked_companies`, and masks all employer and academic institution names with reversible placeholders (`[[EMP_*]]`, `[[INST_*]]`) before invoking `GeminiAdapter`, `GroqAdapter`, or local `OllamaAdapter` over raw `httpx.AsyncClient` (zero heavy vendor SDKs).
-  - **`VeracityGuard`:** Rehydrates placeholders locally and inspects each text block independently. Any attempt by an LLM to inject `preparable_gap`/`unconfirmed` skills, `reserved` projects, self-deprecating labels, or **invented numbers/metrics** triggers an immediate granular fallback to the deterministic text and emits a structured `before`/`after` diff.
-
-### 3. Offline ATS-Clean A4 PDF Pipeline
-- Semantic HTML5 (`<header>`, `<main>`, `<section>`, `<article>`, `<ul>/<li>`) styled exclusively with pure Vanilla CSS (`@page { size: A4 portrait }` — zero Flexbox/Grid multi-column traps that scramble ATS reading order) and bundled offline `Libre Franklin` `.woff2` fonts.
-- Rendered via lazy-initialized Headless Chromium (`ChromiumPdfBrowserManager`) with external network requests blocked (`route.abort()`) and an automatic 4-step `auto_fit` controller enforcing `max_pages`.
-- Verified post-render by `pypdf` (`ATSValidationResult`: page budget, linear text extraction, zero leaked forbidden/gap terms, and real `/Subtype /Link` URI annotations) and hashed with **SHA-256** for the Kanban audit trail.
-
-### 4. Defense-in-Depth Privacy Governance
-- **Strict Workspace Isolation:** All real user profiles, SQLite databases, rotating backups, and exported PDFs reside exclusively inside `./user_data/` (gitignored and `.dockerignore`d).
-- **Public Demo Persona:** Tracked `examples/*.example.json` files feature a 100% fictional persona (*Marina Alves Costa*, Belo Horizonte/MG) for instant portfolio evaluation.
-- **Active Pre-Commit Scanner:** `scripts/check_privacy.py` (wired into `.git/hooks/pre-commit`) scans every commit against generic PII regexes and dynamic in-memory fingerprints without hardcoding a single personal string in source code.
-
----
-
-## Repository Structure
-
-```text
-resumatch/
-├── backend/
-│   ├── app/
-│   │   ├── adapters/        # LLM httpx adapters, PIIStripper, Chromium PDF & pypdf ATS validator
-│   │   ├── api/             # REST endpoints (/api/jobs, /api/resumes, /api/applications, /api/profile)
-│   │   ├── connectors/      # SafeAsyncHttpClient (HTTPS, robots.txt, rate-limit, budget) + connectors
-│   │   ├── core/            # Pydantic Settings, path vault guard, SQLite WAL engine
-│   │   ├── domain/          # DeterministicTriageEngine, DeterministicResumeComposer, VeracityGuard
-│   │   ├── models/          # Pydantic v2 strict schemas & SQLModel relational entities
-│   │   ├── services/        # Discovery, APScheduler, Resume export, Atomic config writer
-│   │   └── templates/       # Offline A4 HTML5 + Vanilla CSS + bundled Libre Franklin WOFF2
-│   └── tests/               # End-to-end synchronous pytest suite (isolated tmp_path fixtures)
-├── frontend/                # React 18 + TypeScript + Vite + Pure Vanilla CSS Modules (Zero Tailwind)
-├── examples/                # Public fictional demo configs (Marina Alves Costa)
-├── scripts/                 # start_app.py, bootstrap_demo.py, check_privacy.py, install_hooks.py
-├── user_data/               # Gitignored private workspace (profile/, config/, db/, exports/, backups/)
-├── Dockerfile               # Multi-stage build (Node 22 Alpine -> Python 3.12 Slim + Chromium)
-├── docker-compose.yml       # 1-command container demo with automatic bootstrap
-└── start_resumatch.bat      # 1-click Windows desktop app launcher
 ```
 
 ---
 
-## Quickstart — Option 1: Docker (1 Command for Portfolio Review)
+## 🛠️ Stack Tecnológica
+
+### Backend & Domínio
+- **Python 3.12+ & FastAPI** — API REST assíncrona, *lifespan* gerenciado e entrega estática integrada da SPA.
+- **Pydantic v2 & Pydantic Settings** — validação estrita de contratos (`MasterProfile` v2.1, `ResumeDraft`, configurações) e escrita atômica em disco com backups rotativos.
+- **SQLModel + SQLite (`PRAGMA journal_mode=WAL`)** — banco relacional local rápido, sem dependência de servidores externos e zero armazenamento de binários pesados.
+- **httpx + truststore + selectolax + APScheduler** — conectores `HTTPS` assíncronos respeitando `robots.txt`, *rate-limit* por domínio, filtro de 14 dias, deduplicação entre portais e agendamento opcional.
+- **Motor IA Exclusivo Google Gemini (`httpx` puro, zero SDKs pesados)** — conexão guiada em 2 cliques com **Google Gemini** (`gemini-2.5-flash`) e saída JSON estruturada.
+
+### Motor de Documentos A4 & Validação ATS
+- **Jinja2 + HTML5 Semântico + Vanilla CSS (`@page { size: A4 portrait }`)** — tipografia editorial com fontes `Libre Franklin` (`.woff2`) embutidas offline, sem colunas duplas ou tabelas de layout que confundem leitores ATS.
+- **Playwright (Headless Chromium Sob Demanda)** — navegador iniciado de forma preguiçosa (*lazy*), reutilizado entre exportações, bloqueado contra requisições externas e encerrado automaticamente após ociosidade.
+- **pypdf (`ATS Validator`)** — inspeciona o PDF gerado garantindo contagem exata de páginas (`auto_fit`), extração linear de texto e preservação de links clicáveis (`GitHub`, `LinkedIn`, portfólio).
+
+### Frontend & Experiência Desktop
+- **React 18 + TypeScript + Vite** — compilação ultrarrápida e tipagem ponta a ponta.
+- **100% Vanilla CSS (`tokens.css` + CSS Modules)** — zero Tailwind, zero bibliotecas pesadas de componentes e zero CSS-in-JS em tempo de execução.
+- **Executável Nativo (`Resumatch.exe`)** — abre em 1 clique como aplicativo nativo na barra de tarefas com ícone Chibi dedicado, sem abrir janelas de terminal, e encerra o servidor automaticamente ao fechar a janela.
+
+---
+
+## 🔒 Governança de Privacidade e Isolamento de Dados
+
+Este repositório foi projetado desde o primeiro commit para ser **100% seguro em portfólio público**:
+
+- 📁 **Isolamento total em `./user_data/`:** seu perfil real, banco SQLite, chaves de API, backups automáticos e PDFs gerados vivem exclusivamente dentro de `./user_data/` (bloqueado no `.gitignore` e no `.dockerignore`).
+- 🧑‍💻 **Persona fictícia pronta para demonstração:** a pasta pública [`examples/`](./examples) utiliza apenas dados fictícios (*Marina Alves Costa*, Belo Horizonte/MG) para que qualquer recrutador ou desenvolvedor teste o sistema imediatamente.
+- 🛡️ **Scanner Anti-Vazamento em `pre-commit`:** o script [`scripts/check_privacy.py`](./scripts/check_privacy.py), instalado automaticamente em `.git/hooks/pre-commit`, barra qualquer tentativa acidental de versionar `.pdf`, `.docx`, `.sqlite3`, chaves secretas ou dados pessoais.
+- 🕵️ **Mascaramento Reversível na IA (`PIIStripper`):** ao gerar ou importar um currículo via Google Gemini, e-mail, telefone, bairro, links e nomes de empregadores/instituições são substituídos por *placeholders* (`[[EMP_1]]`, `[[INST_1]]`) e restaurados localmente na sua máquina.
+
+---
+
+## 🚀 Como Executar o Projeto
+
+### Opção 1 — Via Docker (Recomendado para Avaliação Rápida em 1 Comando)
 
 ```bash
 docker compose up --build
 ```
 
-Open `http://localhost:8000`. If `./user_data/` is empty, Resumatch automatically bootstraps the fictional demo workspace from `examples/` (*Marina Alves Costa* — `dev`, `suporte`, and `suporte-en` presets) and initializes `app.sqlite3` in WAL mode.
+Acesse **`http://localhost:8000`**. Se a pasta `./user_data/` estiver vazia, o container carrega automaticamente o perfil demonstrativo de `examples/` (*Marina Alves Costa*) e inicializa o banco SQLite.
 
 ---
 
-## Quickstart — Option 2: Local Single-Process App Mode
+### Opção 2 — Modo Aplicativo Local (Windows / Linux / macOS)
 
-### Prerequisites
-- Python `3.12+`
-- Node.js `20+` / `22 LTS`
+#### 1. Pré-requisitos
+- **Python `3.12+`**
+- **Node.js `20+` / `22 LTS`**
 
-### Setup
-```bash
+#### 2. Instalação Inicial
+```powershell
+# 1. Criar e ativar o ambiente virtual
 python -m venv .venv
-# Windows PowerShell:
 .\.venv\Scripts\Activate.ps1
+
+# 2. Instalar dependências do backend e o motor Chromium A4
 pip install -e ".[dev]"
 playwright install chromium-headless-shell
 
-# Install pre-commit privacy hook & bootstrap demo data (if user_data/ is empty):
+# 3. Ativar o hook de privacidade e inicializar dados de exemplo (se user_data/ estiver vazio)
 python scripts/install_hooks.py
 python scripts/bootstrap_demo.py
 ```
 
-### Launch in 1 Click
-- **Windows:** Double-click `start_resumatch.bat` (or run `python scripts/start_app.py`).
-- **Cross-platform CLI:**
+#### 3. Abrir em 1 Clique
+- **No Windows:** gere o executável nativo com `python scripts/build_launcher_exe.py` (feito uma única vez) e dê duplo clique em **`Resumatch.exe`** na raiz do projeto. Ele inicia silenciosamente sem abrir CMD, exibe o ícone Chibi na barra de tarefas e encerra o servidor sozinho ao fechar a janela.
+- **Via Terminal:**
   ```bash
   python scripts/start_app.py
   ```
-`start_app.py` builds `frontend/dist` if needed, starts FastAPI serving both `/api/*` and the SPA on `http://127.0.0.1:8000`, and opens a dedicated desktop app window (`Edge/Chrome --app`). Interactive OpenAPI documentation remains available at `http://127.0.0.1:8000/docs`.
+- **Documentação interativa da API (Swagger/OpenAPI):** disponível em `http://127.0.0.1:8000/docs` enquanto o app estiver aberto.
 
 ---
 
-## Quality & Privacy Verification
+## 📂 Estrutura de Pastas
+
+```text
+resumatch/
+├── assets/                  # Ícone multi-tamanho resumatch.ico gerado via Pillow
+├── backend/
+│   ├── app/
+│   │   ├── adapters/        # Google Gemini (httpx), PIIStripper, Chromium PDF e pypdf QA
+│   │   ├── api/             # Rotas REST (/api/profile, /api/resumes, /api/jobs, /api/applications)
+│   │   ├── connectors/      # Cliente HTTP seguro (HTTPS, robots.txt, 8s timeout) e conectores de vagas
+│   │   ├── core/            # Configurações Pydantic, guarda de caminhos e motor SQLite WAL
+│   │   ├── domain/          # Triagem determinística, deduplicação entre portais e normalizador de datas
+│   │   ├── models/          # Schemas enxutos v2.1 (MasterProfile, ResumeDraft) e entidades SQLModel
+│   │   ├── services/        # Importação inteligente .pdf/.docx, geração IA, PDF A4 e escrita atômica
+│   │   └── templates/       # Template HTML5 + Vanilla CSS A4 + seletor de fontes ATS offline
+│   └── tests/               # Suíte automatizada pytest (ASGITransport + MockTransport)
+├── frontend/                # SPA em React 18 + TypeScript + Vite + Vanilla CSS Puro (Design Altitude)
+├── examples/                # Configurações públicas fictícias (Marina Alves Costa)
+├── scripts/                 # build_launcher_exe.py, generate_icons.py, start_app.py, check_privacy.py
+├── user_data/               # Workspace privado ignorado pelo Git (perfil real, SQLite, backups e PDFs)
+├── Dockerfile               # Build multi-stage (Node 22 Alpine -> Python 3.12 Slim + Chromium)
+├── docker-compose.yml       # Subida completa em 1 comando
+└── Resumatch.exe            # Executável nativo Windows (compilado localmente, ignorado no Git)
+```
+
+---
+
+## 🧪 Testes Automatizados e Auditoria de Privacidade
 
 ```bash
-# 1. Type-check & build the React + Vanilla CSS SPA
-cd frontend && npm run build && cd ..
-
-# 2. Run the full automated backend & PDF/ATS test suite
+# 1. Executar toda a suíte de testes de backend, importação DOCX/PDF e validação A4 ATS
 pytest -v
 
-# 3. Verify zero PII or private file leaks across the repository
+# 2. Validar tipagem TypeScript e gerar o pacote estático de produção do Frontend
+cd frontend && npm run build && cd ..
+
+# 3. Executar a varredura completa anti-vazamento de dados pessoais
 python scripts/check_privacy.py
 ```

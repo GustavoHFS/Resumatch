@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <!-- Minimalist Monochrome Chibi Mascot — Altitude Dark System (#111111 / #eeeeee / #a4a19b) -->
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="#111111" stroke="#323232" stroke-width="6"/>
+
+  <!-- Cute Chibi Hair Tuft (Ahoge) -->
+  <path d="M126 42 C122 24, 146 22, 148 38 C142 36, 134 38, 131 44" stroke="#eeeeee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Chibi Head Silhouette & Hair Bangs -->
+  <circle cx="128" cy="104" r="56" fill="#181818" stroke="#eeeeee" stroke-width="10"/>
+  <path d="M74 96 C86 68, 112 64, 128 80 C142 64, 170 68, 182 96" stroke="#eeeeee" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Minimalist Expressive Chibi Eyes -->
+  <ellipse cx="106" cy="110" rx="7.5" ry="9.5" fill="#eeeeee"/>
+  <circle cx="108.5" cy="106.5" r="2.5" fill="#111111"/>
+  <ellipse cx="150" cy="110" rx="7.5" ry="9.5" fill="#eeeeee"/>
+  <circle cx="152.5" cy="106.5" r="2.5" fill="#111111"/>
+
+  <!-- Subtle Friendly Smile -->
+  <path d="M120 128 Q128 135 136 128" stroke="#eeeeee" stroke-width="6.5" stroke-linecap="round" fill="none"/>
+
+  <!-- Chibi Shoulders / Suit Collar + Neat Mini Tie -->
+  <path d="M78 214 C78 176, 98 162, 128 162 C158 162, 178 176, 178 214" fill="#181818" stroke="#eeeeee" stroke-width="10" stroke-linecap="round"/>
+  <polygon points="128,166 118,184 128,206 138,184" fill="#eeeeee"/>
+
+  <!-- Mini A4 Resume Card Held at Corner -->
+  <rect x="150" y="156" width="54" height="66" rx="8" fill="#111111" stroke="#eeeeee" stroke-width="8"/>
+  <line x1="164" y1="174" x2="190" y2="174" stroke="#eeeeee" stroke-width="6" stroke-linecap="round"/>
+  <line x1="164" y1="190" x2="190" y2="190" stroke="#a4a19b" stroke-width="5" stroke-linecap="round"/>
+  <line x1="164" y1="204" x2="182" y2="204" stroke="#a4a19b" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -1,119 +1,173 @@
 <!DOCTYPE html>
-<html lang="{{ payload.locale }}">
+<html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ payload.header.full_name }} — {{ payload.display_name }}</title>
+  <title>{{ payload.header.full_name }}{% if payload.target_role %} — {{ payload.target_role }}{% endif %}</title>
   <style>
     {{ font_face_css | safe }}
+    :root { --resume-font-family: {{ font_stack | safe }}; }
     {{ stylesheet_css | safe }}
   </style>
 </head>
 <body class="{{ 'standalone-preview' if standalone_preview else '' }}">
   <article class="resume-sheet{{ ' compact-mode' if payload.compact_mode else '' }}">
-    <header class="resume-header">
-      <h1 class="candidate-name">{{ payload.header.full_name }}</h1>
-      <p class="header-line">{{ payload.header.location_line }}</p>
-      <p class="header-line">{{ payload.header.contact_line }}</p>
-      {% if payload.header.links %}
-      <p class="header-line header-links">
-        {% for link in payload.header.links %}
-          <a href="{{ link.url }}">{{ link.display_text }}</a>{% if not loop.last %}<span class="sep">•</span>{% endif %}
-        {% endfor %}
-      </p>
-      {% endif %}
-    </header>
-
-    {% for section_kind in payload.section_order %}
-      {% set break_cls = ' page-break-before' if section_kind in payload.page_break_before_sections else '' %}
-
-      {% if section_kind == 'summary' %}
-      <section class="resume-section{{ break_cls }}" data-section="summary">
-        <h2 class="section-heading">{{ payload.section_labels.summary }}</h2>
-        <p class="summary-paragraph">{{ payload.summary.text }}</p>
-      </section>
-
-      {% elif section_kind == 'education' and payload.education %}
-      <section class="resume-section{{ break_cls }}" data-section="education">
-        <h2 class="section-heading">{{ payload.section_labels.education }}</h2>
-        {% for edu in payload.education %}
-        <div class="entry-block">
-          <p class="entry-title-line"><strong>{{ edu.degree_line }}</strong></p>
-          <p class="entry-sub-line"><strong>{{ edu.institution_line }}</strong></p>
-          <p class="entry-period-line">{{ edu.period_line }}</p>
-        </div>
-        {% endfor %}
-      </section>
-
-      {% elif section_kind == 'experience' and payload.experiences %}
-      <section class="resume-section{{ break_cls }}" data-section="experience">
-        <h2 class="section-heading">{{ payload.section_labels.experience }}</h2>
-        {% for exp in payload.experiences %}
-        <div class="entry-block">
-          <p class="entry-title-line"><strong>{{ exp.title_company_bold }}</strong>{{ exp.meta_suffix }}</p>
-          <ul class="bullet-list">
-            {% for bullet in exp.bullets %}
-            <li>{{ bullet.text }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-        {% endfor %}
-      </section>
-
-      {% elif section_kind == 'courses' and payload.courses %}
-      <section class="resume-section{{ break_cls }}" data-section="courses">
-        <h2 class="section-heading">{{ payload.section_labels.courses }}</h2>
-        {% for course in payload.courses %}
-        <div class="entry-block">
-          <p class="course-line"><strong>{{ course.bold_prefix }}</strong>{{ course.rest_text }}</p>
-        </div>
-        {% endfor %}
-      </section>
-
-      {% elif section_kind == 'projects' and payload.projects %}
-      <section class="resume-section{{ break_cls }}" data-section="projects">
-        <h2 class="section-heading">{{ payload.section_labels.projects }}</h2>
-        {% for proj in payload.projects %}
-        <div class="entry-block">
-          <p class="entry-title-line">
-            <strong>{{ proj.name }}</strong>
-            {% if proj.url %} — <a href="{{ proj.url }}">{{ proj.url }}</a>{% endif %}
-          </p>
-          {% if proj.summary %}
-          <p class="entry-sub-line">{{ proj.summary }}</p>
+    <div id="resume-flow" class="resume-flow">
+      <header class="resume-header">
+        <h1 class="candidate-name">{{ payload.header.full_name }}</h1>
+        {% if payload.target_role %}
+        <p class="target-role-line">{{ payload.target_role }}</p>
+        {% endif %}
+        {% if payload.header.location_line %}
+        <p class="header-line">{{ payload.header.location_line }}</p>
+        {% endif %}
+        {% if payload.header.contact_line %}
+        <p class="header-line header-links">
+          {% if payload.header.email and payload.header.email in payload.header.contact_line %}
+            {% set cparts = payload.header.contact_line.split(payload.header.email, 1) %}
+            {{ cparts[0] }}<a href="mailto:{{ payload.header.email }}">{{ payload.header.email }}</a>{{ cparts[1] }}
+          {% else %}
+            {{ payload.header.contact_line }}
           {% endif %}
-          {% if proj.bullets %}
-          <ul class="bullet-list">
-            {% for b in proj.bullets %}
-            <li>{{ b.text }}</li>
-            {% endfor %}
-          </ul>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </section>
-
-      {% elif section_kind == 'skills' and payload.skill_groups %}
-      <section class="resume-section{{ break_cls }}" data-section="skills">
-        <h2 class="section-heading">{{ payload.section_labels.skills }}</h2>
-        <ul class="skills-list">
-          {% for grp in payload.skill_groups %}
-          <li><strong>{{ grp.label }}: </strong>{{ grp.items_text }}</li>
-          {% endfor %}
-        </ul>
-      </section>
-
-      {% elif section_kind == 'languages' and payload.languages %}
-      <section class="resume-section{{ break_cls }}" data-section="languages">
-        <h2 class="section-heading">{{ payload.section_labels.languages }}</h2>
-        <p class="languages-line">
-          {% for lang in payload.languages %}
-            <strong>{{ lang.language }}: </strong>{{ lang.proficiency }}{% if not loop.last %}<span class="sep">•</span>{% endif %}
+        </p>
+        {% elif payload.header.email %}
+        <p class="header-line header-links">
+          <a href="mailto:{{ payload.header.email }}">{{ payload.header.email }}</a>
+        </p>
+        {% endif %}
+        {% if payload.header.links %}
+        <p class="header-line header-links">
+          {% for link in payload.header.links %}
+            <a href="{{ link.url }}">{{ link.display_text }}</a>{% if not loop.last %}<span class="sep">•</span>{% endif %}
           {% endfor %}
         </p>
-      </section>
-      {% endif %}
-    {% endfor %}
+        {% endif %}
+      </header>
+
+      {% for section_kind in payload.section_order %}
+        {% set break_cls = ' page-break-before' if section_kind in payload.page_break_before_sections else '' %}
+
+        {% if section_kind == 'summary' and payload.summary %}
+        <section class="resume-section{{ break_cls }}" data-section="summary">
+          <h2 class="section-heading">{{ payload.section_labels.summary }}</h2>
+          <p class="summary-paragraph">{{ payload.summary }}</p>
+        </section>
+
+        {% elif section_kind == 'experience' and payload.experiences %}
+        <section class="resume-section{{ break_cls }}" data-section="experience">
+          <h2 class="section-heading">{{ payload.section_labels.experience }}</h2>
+          {% for exp in payload.experiences %}
+          <div class="entry-block">
+            <div class="entry-head-row">
+              <span class="entry-title-line">
+                <strong>{{ exp.role }}{% if exp.company %} — {{ exp.company }}{% endif %}</strong>
+              </span>
+              {% set exp_meta = [exp.period, exp.location] | select | join(' · ') %}
+              {% if exp_meta %}
+              <span class="entry-right-meta">{{ exp_meta }}</span>
+              {% endif %}
+            </div>
+            {% if exp.description %}
+            <p class="summary-paragraph">{{ exp.description }}</p>
+            {% endif %}
+            {% if exp.highlights %}
+            <ul class="bullet-list">
+              {% for item in exp.highlights %}
+              <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+
+        {% elif section_kind == 'education' and payload.education %}
+        <section class="resume-section{{ break_cls }}" data-section="education">
+          <h2 class="section-heading">{{ payload.section_labels.education }}</h2>
+          {% for edu in payload.education %}
+          <div class="entry-block">
+            <div class="entry-head-row">
+              <span class="entry-title-line"><strong>{{ edu.degree }}</strong></span>
+              {% if edu.period %}
+              <span class="entry-right-meta">{{ edu.period }}</span>
+              {% endif %}
+            </div>
+            {% if edu.institution %}
+            <p class="entry-sub-line"><strong>{{ edu.institution }}</strong>{% if edu.details %} ({{ edu.details }}){% endif %}</p>
+            {% elif edu.details %}
+            <p class="entry-sub-line">{{ edu.details }}</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+
+        {% elif section_kind == 'projects' and payload.projects %}
+        <section class="resume-section{{ break_cls }}" data-section="projects">
+          <h2 class="section-heading">{{ payload.section_labels.projects }}</h2>
+          {% for proj in payload.projects %}
+          <div class="entry-block">
+            <p class="entry-title-line">
+              <strong>{{ proj.name }}</strong>{% if proj.url %} — <a href="{{ proj.url }}">{{ proj.url }}</a>{% endif %}
+            </p>
+            {% if proj.description %}
+            <p class="entry-sub-line">{{ proj.description }}</p>
+            {% endif %}
+            {% if proj.highlights %}
+            <ul class="bullet-list">
+              {% for h in proj.highlights %}
+              <li>{{ h }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+
+        {% elif section_kind == 'courses' and payload.courses %}
+        <section class="resume-section{{ break_cls }}" data-section="courses">
+          <h2 class="section-heading">{{ payload.section_labels.courses }}</h2>
+          {% for course in payload.courses %}
+          <div class="entry-block">
+            <div class="entry-head-row">
+              <span class="course-line">
+                <strong>{{ course.title }}{% if course.institution %} — {{ course.institution }}{% endif %}</strong>
+              </span>
+              {% set cmeta = [course.workload, course.completion_date] | select | join(' · ') %}
+              {% if cmeta %}
+              <span class="entry-right-meta">{{ cmeta }}</span>
+              {% endif %}
+            </div>
+            {% if course.description %}
+            <p class="entry-sub-line">{{ course.description }}</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </section>
+
+        {% elif section_kind == 'skills' and payload.skill_groups %}
+        <section class="resume-section{{ break_cls }}" data-section="skills">
+          <h2 class="section-heading">{{ payload.section_labels.skills }}</h2>
+          <ul class="skills-list">
+            {% for grp in payload.skill_groups %}
+            {% if grp.items %}
+            <li>{% if grp.label %}<strong>{{ grp.label }}: </strong>{% endif %}{{ grp.items | join(', ') }}</li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+        </section>
+
+        {% elif section_kind == 'languages' and payload.languages %}
+        <section class="resume-section{{ break_cls }}" data-section="languages">
+          <h2 class="section-heading">{{ payload.section_labels.languages }}</h2>
+          <p class="languages-line">
+            {% for lang in payload.languages %}
+              <strong>{{ lang.language }}</strong>{% if lang.proficiency %}: {{ lang.proficiency }}{% endif %}{% if not loop.last %}<span class="sep">•</span>{% endif %}
+            {% endfor %}
+          </p>
+        </section>
+        {% endif %}
+      {% endfor %}
+    </div>
   </article>
 </body>
 </html>
