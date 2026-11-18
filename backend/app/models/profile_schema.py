@@ -174,6 +174,7 @@ class CourseTranslation(StrictModel):
 
 class CourseEntry(StrictModel):
     id: str = Field(pattern=r"^[a-z0-9_-]+$")
+    entry_type: Literal["course", "practical_assessment"] = "course"
     title: str = Field(min_length=2, max_length=160)
     institution: str = Field(min_length=2, max_length=120)
     details_label: str = Field(min_length=2, max_length=120)

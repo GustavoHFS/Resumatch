@@ -17,6 +17,14 @@ from app.models.criteria_schema import (
     ShortPrepRule,
     StrategicExclusionRule,
 )
+from app.models.entities import (
+    ApplicationEvent,
+    ApplicationTracking,
+    DiscoveryRun,
+    JobObservation,
+    JobOpportunity,
+    ResumeVersion,
+)
 from app.models.profile_schema import (
     AreaPreset,
     BulletItem,
@@ -56,6 +64,8 @@ from app.models.sources_schema import (
 
 __all__ = [
     "AllowedCityRule",
+    "ApplicationEvent",
+    "ApplicationTracking",
     "AreaPreset",
     "BlockedCompaniesConfig",
     "BlockedCompanyEntry",
@@ -66,6 +76,7 @@ __all__ = [
     "ContractPolicy",
     "CourseEntry",
     "CourseTranslation",
+    "DiscoveryRun",
     "EducationEntry",
     "EducationTranslation",
     "EmpregareMcpSourceConfig",
@@ -73,6 +84,8 @@ __all__ = [
     "ExperienceTranslation",
     "GeographyPolicy",
     "GreenhouseSourceConfig",
+    "JobObservation",
+    "JobOpportunity",
     "JobSourceEntry",
     "JobSourcesConfig",
     "LanguageEntry",
@@ -85,6 +98,7 @@ __all__ = [
     "ProjectEntry",
     "PublicPagesSourceConfig",
     "RelatedEntityRecord",
+    "ResumeVersion",
     "RoleCatalog",
     "RssLocalSourceConfig",
     "SchedulePolicy",
