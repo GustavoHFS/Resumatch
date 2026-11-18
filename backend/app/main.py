@@ -10,7 +10,9 @@ import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager
 from app.api.jobs_routes import router as jobs_router
+from app.api.resumes_routes import router as resumes_router
 from app.api.routes import router as core_router
 from app.core.config import AppSettings, get_settings
 from app.core.database import create_sqlite_wal_engine, init_db_schema
@@ -54,16 +56,21 @@ def create_app(
         journal_mode = init_db_schema(engine)
         scheduler = DiscoverySchedulerManager(db_engine=engine, settings=resolved_settings)
         scheduler.start()
+        pdf_browser_manager = ChromiumPdfBrowserManager(
+            idle_timeout_seconds=resolved_settings.pdf_browser_idle_timeout_seconds
+        )
 
         application.state.settings = resolved_settings
         application.state.engine = engine
         application.state.journal_mode = journal_mode
         application.state.bootstrapped_demo = bootstrapped
         application.state.scheduler = scheduler
+        application.state.pdf_browser_manager = pdf_browser_manager
         application.state.http_transport = http_transport
         try:
             yield
         finally:
+            await pdf_browser_manager.aclose()
             scheduler.shutdown()
             engine.dispose()
 
@@ -84,6 +91,7 @@ def create_app(
 
     application.include_router(core_router)
     application.include_router(jobs_router)
+    application.include_router(resumes_router)
     return application
 
 
