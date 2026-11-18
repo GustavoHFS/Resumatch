@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "companies": [
+    {
+      "id": "exemplo-outsourcing",
+      "display_name": "Exemplo Outsourcing S.A.",
+      "permanent": true,
+      "cnpj": "00.000.000/0001-00",
+      "corporate_name": "Exemplo Outsourcing e Servicos Digitais S.A.",
+      "domains": ["exemplo-outsourcing.example.com"],
+      "aliases": ["Exemplo Outsourcing", "Grupo Exemplo Tech"],
+      "confirmed_related_entities": [
+        {
+          "name": "Exemplo RH Digital",
+          "relationship_type": "recruiting_on_behalf",
+          "evidence_source": "Fictional demonstration relationship record"
+        }
+      ],
+      "blocked_actions": [
+        "automated_application",
+        "prospecting_email",
+        "resume_submission",
+        "interest_outreach"
+      ],
+      "require_evidence_for_relations": true,
+      "uncertain_relation_policy": "hold_for_manual_review",
+      "preserve_in_work_history": true
+    }
+  ]
+}

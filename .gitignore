@@ -1,0 +1,73 @@
+# ==============================================================================
+# PRIVACY & PERSONAL DATA ISOLATION (CRITICAL — NEVER REMOVE)
+# ==============================================================================
+# All personal resumes, real profiles, SQLite databases, exports, and legacy
+# archives live strictly inside user_data/. Only the empty .gitkeep is tracked.
+user_data/*
+!user_data/.gitkeep
+
+# Defense-in-depth: block sensitive folders and document formats anywhere in repo
+Dados Sensíveis/
+**/Dados Sensíveis/
+Currículo*/
+**/Currículo*/
+*.pdf
+*.docx
+*.doc
+*.odttf
+*.bak
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-shm
+*.db-wal
+
+# Local agent / editor configs & temporary scratch artifacts
+opencode.jsonc
+.opencode/
+AGENTS.md
+.tmp*
+**/.tmp*
+.dryrun/
+**/.dryrun/
+.revisao-*/
+**/.revisao-*/
+.ordem-*/
+**/.ordem-*/
+.personalizacao-*/
+**/.personalizacao-*/
+
+# ==============================================================================
+# ENVIRONMENT & SECRETS
+# ==============================================================================
+.env
+.env.*
+!.env.example
+
+# ==============================================================================
+# PYTHON & BACKEND
+# ==============================================================================
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ==============================================================================
+# FRONTEND (NODE / VITE) & OS
+# ==============================================================================
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+.DS_Store
+Thumbs.db

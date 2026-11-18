@@ -1,0 +1,513 @@
+{
+  "schema_version": "1.0",
+  "header": {
+    "full_name": "Marina Alves Costa",
+    "age": 21,
+    "neighborhood": "Savassi",
+    "city": "Belo Horizonte",
+    "state": "Minas Gerais",
+    "country_by_locale": {
+      "pt-BR": "Brasil",
+      "en-US": "Brazil"
+    },
+    "email": "marina.costa@example.com",
+    "phone": "(31) 90000-0000",
+    "links": [
+      {
+        "label": "GitHub",
+        "url": "https://github.com/marina-costa-example",
+        "display_text": "github.com/marina-costa-example"
+      },
+      {
+        "label": "LinkedIn",
+        "url": "https://www.linkedin.com/in/marina-costa-example",
+        "display_text": "linkedin.com/in/marina-costa-example"
+      }
+    ]
+  },
+  "education": [
+    {
+      "id": "edu_sistemas_internet",
+      "degree": "Tecnólogo em Sistemas para Internet",
+      "institution": "Universidade Estadual de Exemplo (UEEX)",
+      "program_note": "Programa Trilhas Digitais",
+      "period_label": "Início: Fev/2026 · Previsão de conclusão: Dez/2028",
+      "status": "in_progress",
+      "areas": [],
+      "factual_source": "examples/master_profile.example.json#education",
+      "translations": {
+        "en-US": {
+          "degree": "Undergraduate Degree in Internet Systems",
+          "institution": "Example State University (UEEX)",
+          "program_note": "Digital Pathways Program",
+          "period_label": "Start: Feb/2026 · Expected completion: Dec/2028"
+        }
+      }
+    },
+    {
+      "id": "edu_ads",
+      "degree": "Tecnólogo em Análise e Desenvolvimento de Sistemas",
+      "institution": "Faculdade Tecnológica Horizonte",
+      "program_note": null,
+      "period_label": "Concluído em Dez/2025",
+      "status": "completed",
+      "areas": [],
+      "factual_source": "examples/master_profile.example.json#education",
+      "translations": {
+        "en-US": {
+          "degree": "Associate Degree in Systems Analysis and Development",
+          "institution": "Horizonte College of Technology",
+          "program_note": null,
+          "period_label": "Completed in Dec/2025"
+        }
+      }
+    },
+    {
+      "id": "edu_redes",
+      "degree": "Curso Técnico em Redes de Computadores",
+      "institution": "Escola Técnica Estadual de Minas",
+      "program_note": null,
+      "period_label": "Concluído em Dez/2022",
+      "status": "completed",
+      "areas": ["suporte", "suporte-en", "cybersec", "generalista"],
+      "factual_source": "examples/master_profile.example.json#education",
+      "translations": {
+        "en-US": {
+          "degree": "Technical Diploma in Computer Networks",
+          "institution": "Minas State Technical School",
+          "program_note": null,
+          "period_label": "Completed in Dec/2022"
+        }
+      }
+    }
+  ],
+  "experiences": [
+    {
+      "id": "exp_horizonte_support",
+      "role": "Técnica de Suporte de TI",
+      "company": "Horizonte Tech Solutions",
+      "employment_type_label": "Temporário (CLT)",
+      "period_label": "Mar/2024 – Set/2024",
+      "factual_source": "examples/master_profile.example.json#experiences",
+      "translations": {
+        "en-US": {
+          "role": "IT Support Technician",
+          "employment_type_label": "Temporary (CLT)",
+          "period_label": "Mar/2024 – Sep/2024"
+        }
+      },
+      "bullets": [
+        {
+          "id": "bul_helpdesk_tickets",
+          "text": "Atendimento presencial e remoto a usuários corporativos (Help Desk), com registro, triagem e acompanhamento de chamados.",
+          "areas": ["suporte", "suporte-en", "dev", "administrativo", "generalista"],
+          "skill_tags": ["chamados", "atendimento"],
+          "keywords": ["help desk", "chamados", "atendimento", "remoto"],
+          "factual_source": "Confirmed support experience",
+          "translations": {
+            "en-US": "Provided in-person and remote Help Desk support to corporate users, logging, triaging, and tracking tickets."
+          }
+        },
+        {
+          "id": "bul_ad_email",
+          "text": "Administração de contas, permissões e senhas no Active Directory; configuração de clientes de e-mail e assinaturas em HTML.",
+          "areas": ["suporte", "suporte-en", "cybersec", "dev", "generalista"],
+          "skill_tags": ["ad", "windows", "email", "web"],
+          "keywords": ["active directory", "acessos", "e-mail", "html"],
+          "factual_source": "Confirmed access & email administration",
+          "translations": {
+            "en-US": "Administered user accounts, access permissions, and password resets in Active Directory; configured email clients and HTML signatures."
+          }
+        },
+        {
+          "id": "bul_maintenance_backups",
+          "text": "Manutenção preventiva e corretiva de estações Windows, implantação de softwares e antivírus, rotinas de backup e suporte a impressoras.",
+          "areas": ["suporte", "suporte-en", "cybersec", "generalista"],
+          "skill_tags": ["windows", "hardware", "antivirus", "backup"],
+          "keywords": ["windows", "manutenção", "antivírus", "backups", "impressoras"],
+          "factual_source": "Confirmed workstation & backup maintenance",
+          "translations": {
+            "en-US": "Performed preventive and corrective maintenance on Windows workstations, deployed software and antivirus, executed backups, and supported printers."
+          }
+        },
+        {
+          "id": "bul_spreadsheets_reports",
+          "text": "Levantamento de cotações de equipamentos, controle de orçamentos em planilhas Excel e elaboração de relatórios técnicos de atendimento.",
+          "areas": ["administrativo", "dados", "dev", "suporte", "generalista"],
+          "skill_tags": ["excel", "office", "relatorios"],
+          "keywords": ["excel", "planilhas", "orçamentos", "relatórios"],
+          "factual_source": "Confirmed spreadsheet & reporting workflow",
+          "translations": {
+            "en-US": "Compiled hardware quotes, organized procurement budgets in Excel spreadsheets, and authored technical service reports."
+          }
+        }
+      ]
+    }
+  ],
+  "courses": [
+    {
+      "id": "course_agentic_ai",
+      "title": "Arquitetura de Agentes Autônomos com Python",
+      "institution": "Instituto Digital Aberto",
+      "details_label": "40 horas · Concluído em 2026",
+      "hours": 40,
+      "year": 2026,
+      "status": "completed",
+      "areas": ["dev", "generalista"],
+      "factual_source": "Completed certificate declared in base resume",
+      "translations": {
+        "en-US": {
+          "title": "Autonomous AI Agents Architecture with Python",
+          "institution": "Open Digital Institute",
+          "details_label": "40 hours · Completed in 2026"
+        }
+      }
+    },
+    {
+      "id": "course_docker_in_progress",
+      "title": "Containers e DevOps na Prática",
+      "institution": "Plataforma Livre",
+      "details_label": "Em andamento",
+      "hours": 20,
+      "year": 2026,
+      "status": "in_progress_free",
+      "areas": ["dev"],
+      "factual_source": "Ongoing free course — excluded from resumes until completion",
+      "translations": {}
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj_atlas_reserved",
+      "name": "AtlasFlow Sandbox",
+      "status": "reserved",
+      "summary": "Work-in-progress internal backend project not yet released for resume inclusion.",
+      "bullets": [],
+      "areas": ["dev"],
+      "url": null,
+      "factual_source": "Reserved project under development"
+    }
+  ],
+  "skills": [
+    {
+      "id": "java",
+      "display_name": "Java",
+      "aliases": ["Java", "POO", "Orientação a Objetos", "OOP"],
+      "areas": ["dev"],
+      "veracity": "academic_foundation",
+      "internal_context": "Academic & self-study foundation in OOP and Java",
+      "summary_label": "Java e orientação a objetos",
+      "factual_source": "Academic curriculum",
+      "translations": {"en-US": "Java & Object-Oriented Programming"}
+    },
+    {
+      "id": "spring",
+      "display_name": "Spring Boot",
+      "aliases": ["Spring Boot", "Spring", "APIs REST", "REST API"],
+      "areas": ["dev"],
+      "veracity": "academic_foundation",
+      "internal_context": "Academic REST API exercises",
+      "summary_label": "Spring Boot e APIs REST",
+      "factual_source": "Academic curriculum",
+      "translations": {"en-US": "Spring Boot & REST APIs"}
+    },
+    {
+      "id": "python",
+      "display_name": "Python",
+      "aliases": ["Python"],
+      "areas": ["dev", "dados"],
+      "veracity": "academic_foundation",
+      "internal_context": "Academic scripting and AI course",
+      "summary_label": "Python",
+      "factual_source": "Academic curriculum",
+      "translations": {"en-US": "Python"}
+    },
+    {
+      "id": "sql",
+      "display_name": "SQL",
+      "aliases": ["SQL", "PostgreSQL", "MySQL", "CRUD", "bancos de dados relacionais"],
+      "areas": ["dev", "dados"],
+      "veracity": "academic_foundation",
+      "internal_context": "Relational queries and CRUD operations",
+      "summary_label": "SQL e bancos relacionais",
+      "factual_source": "Academic curriculum",
+      "translations": {"en-US": "SQL & Relational Databases"}
+    },
+    {
+      "id": "git",
+      "display_name": "Git e GitHub",
+      "aliases": ["Git", "GitHub", "controle de versão"],
+      "areas": ["dev"],
+      "veracity": "academic_foundation",
+      "internal_context": "Repository and branch workflows",
+      "summary_label": "Git/GitHub",
+      "factual_source": "Declared tool familiarity",
+      "translations": {"en-US": "Git & GitHub"}
+    },
+    {
+      "id": "web",
+      "display_name": "Desenvolvimento Web",
+      "aliases": ["HTML", "CSS", "JavaScript", "TypeScript", "React"],
+      "areas": ["dev"],
+      "veracity": "academic_foundation",
+      "internal_context": "Frontend coursework + HTML email signatures",
+      "summary_label": "HTML, CSS, JavaScript e React",
+      "factual_source": "Academic curriculum",
+      "translations": {"en-US": "HTML, CSS, JavaScript & React"}
+    },
+    {
+      "id": "windows",
+      "display_name": "Windows",
+      "aliases": ["Windows", "Microsoft Windows"],
+      "areas": ["suporte", "suporte-en", "cybersec"],
+      "veracity": "confirmed_practice",
+      "internal_context": "Professional workstation support",
+      "summary_label": "Windows",
+      "factual_source": "Support experience",
+      "translations": {"en-US": "Windows"}
+    },
+    {
+      "id": "ad",
+      "display_name": "Active Directory",
+      "aliases": ["Active Directory", "AD"],
+      "areas": ["suporte", "suporte-en", "cybersec"],
+      "veracity": "confirmed_practice",
+      "internal_context": "User/password/domain administration",
+      "summary_label": "Active Directory",
+      "factual_source": "Support experience",
+      "translations": {"en-US": "Active Directory"}
+    },
+    {
+      "id": "chamados",
+      "display_name": "Gestão de chamados",
+      "aliases": ["chamados", "Help Desk", "Service Desk", "ticket management"],
+      "areas": ["suporte", "suporte-en"],
+      "veracity": "confirmed_practice",
+      "internal_context": "Internal ticketing workflow",
+      "summary_label": "gestão de chamados",
+      "factual_source": "Support experience",
+      "translations": {"en-US": "ticket management"}
+    },
+    {
+      "id": "redes",
+      "display_name": "Redes de computadores",
+      "aliases": ["Redes", "TCP/IP", "DNS", "DHCP", "VLAN", "cabeamento"],
+      "areas": ["suporte", "suporte-en", "cybersec"],
+      "veracity": "confirmed_practice",
+      "internal_context": "Technical diploma + connectivity troubleshooting",
+      "summary_label": "redes de computadores",
+      "factual_source": "Technical diploma & support experience",
+      "translations": {"en-US": "computer networks"}
+    },
+    {
+      "id": "excel",
+      "display_name": "Excel",
+      "aliases": ["Excel", "planilhas", "orçamentos"],
+      "areas": ["dados", "administrativo", "suporte"],
+      "veracity": "confirmed_practice",
+      "internal_context": "Equipment budget spreadsheets",
+      "summary_label": "Excel",
+      "factual_source": "Support experience",
+      "translations": {"en-US": "Excel"}
+    },
+    {
+      "id": "power_bi",
+      "display_name": "Power BI",
+      "aliases": ["Power BI", "dashboards", "visualização de dados", "BI"],
+      "areas": ["dados"],
+      "veracity": "academic_foundation",
+      "internal_context": "Dashboard creation during technical assessment",
+      "summary_label": "Power BI",
+      "factual_source": "Practical assessment",
+      "translations": {"en-US": "Power BI"}
+    },
+    {
+      "id": "glpi",
+      "display_name": "GLPI",
+      "aliases": ["GLPI"],
+      "areas": ["suporte"],
+      "veracity": "preparable_gap",
+      "internal_context": "Not used professionally yet; fast onboarding from internal ticket experience",
+      "study_plan": "Revisar interface de filas, SLA e abertura de tickets no GLPI sem declarar experiência prévia.",
+      "factual_source": "Gap catalog",
+      "translations": {}
+    },
+    {
+      "id": "docker",
+      "display_name": "Docker",
+      "aliases": ["Docker", "containers"],
+      "areas": ["dev"],
+      "veracity": "unconfirmed",
+      "internal_context": "Course in progress; verify scope required by job",
+      "study_plan": "Praticar Dockerfile, imagens, portas e volumes localmente antes da entrevista técnica.",
+      "factual_source": "Gap catalog",
+      "translations": {}
+    }
+  ],
+  "languages": [
+    {
+      "id": "lang_pt",
+      "language": "Português",
+      "proficiency": "Nativo",
+      "translations": {
+        "en-US": {
+          "language": "Portuguese",
+          "proficiency": "Native"
+        }
+      }
+    },
+    {
+      "id": "lang_en",
+      "language": "Inglês",
+      "proficiency": "Avançado",
+      "translations": {
+        "en-US": {
+          "language": "English",
+          "proficiency": "Advanced"
+        }
+      }
+    }
+  ],
+  "contextual_equivalences": [
+    {
+      "from_term": "e-mail",
+      "to_term": "correio eletrônico",
+      "trigger_terms": ["correio eletrônico"],
+      "factual_basis": "Configuração de contas e clientes de e-mail confirmada no histórico."
+    },
+    {
+      "from_term": "cabeamento",
+      "to_term": "cabeamento estruturado",
+      "trigger_terms": ["cabeamento estruturado"],
+      "factual_basis": "Fundamentos de cabeamento na formação técnica em Redes."
+    }
+  ],
+  "forbidden_resume_terms": ["PCD"],
+  "area_presets": {
+    "dev": {
+      "area_id": "dev",
+      "display_name": "Desenvolvimento",
+      "locale": "pt-BR",
+      "output_folder": "dev",
+      "output_pdf_filename": "Marina Alves Costa - Curriculo.pdf",
+      "show_age": true,
+      "show_neighborhood": true,
+      "max_pages": 1,
+      "section_order": ["summary", "education", "experience", "courses", "skills", "languages"],
+      "default_summary": "Formada em Análise e Desenvolvimento de Sistemas e graduanda em Sistemas para Internet na UEEX. Foco em desenvolvimento backend Java, orientação a objetos, Spring Boot, APIs REST e SQL, com experiência corporativa em suporte técnico e diagnóstico de sistemas.",
+      "summary_prefix": "Formada em ADS e graduanda em Sistemas para Internet na UEEX, com foco em desenvolvimento de software.",
+      "allowed_summary_skill_ids": ["java", "spring", "sql", "python"],
+      "preferred_bullet_ids": ["bul_helpdesk_tickets", "bul_ad_email", "bul_spreadsheets_reports"],
+      "max_bullets_per_experience": 4,
+      "included_course_ids": ["course_agentic_ai"],
+      "included_project_ids": [],
+      "skill_groups": [
+        {
+          "id": "grp_backend",
+          "label": "Backend",
+          "items_text": "Java, POO, Spring Boot e APIs REST.",
+          "skill_ids": ["java", "spring"],
+          "factual_source": "Academic foundation"
+        },
+        {
+          "id": "grp_web_data",
+          "label": "Web e Dados",
+          "items_text": "Python, HTML, CSS, JavaScript, TypeScript, React, SQL, PostgreSQL e MySQL.",
+          "skill_ids": ["python", "web", "sql"],
+          "factual_source": "Academic foundation"
+        },
+        {
+          "id": "grp_versioning",
+          "label": "Versionamento",
+          "items_text": "Git e GitHub para controle de repositórios e branches.",
+          "skill_ids": ["git"],
+          "factual_source": "Declared familiarity"
+        }
+      ]
+    },
+    "suporte": {
+      "area_id": "suporte",
+      "display_name": "Suporte Técnico e Redes",
+      "locale": "pt-BR",
+      "output_folder": "suporte",
+      "output_pdf_filename": "Marina Alves Costa - Curriculo.pdf",
+      "show_age": true,
+      "show_neighborhood": true,
+      "max_pages": 1,
+      "section_order": ["summary", "education", "experience", "skills", "languages"],
+      "default_summary": "Profissional de TI com experiência em suporte técnico presencial e remoto, atendimento a usuários e gestão de chamados. Atuação com Windows, Active Directory, manutenção de computadores e redes. Técnica em Redes, formada em ADS e graduanda em Sistemas para Internet.",
+      "summary_prefix": "Profissional de TI com experiência em suporte técnico presencial e remoto e gestão de chamados.",
+      "allowed_summary_skill_ids": ["windows", "ad", "chamados", "redes"],
+      "preferred_bullet_ids": ["bul_helpdesk_tickets", "bul_ad_email", "bul_maintenance_backups", "bul_spreadsheets_reports"],
+      "max_bullets_per_experience": 4,
+      "included_course_ids": [],
+      "included_project_ids": [],
+      "skill_groups": [
+        {
+          "id": "grp_sys",
+          "label": "Sistemas e Acessos",
+          "items_text": "Windows, Active Directory e administração de contas corporativas.",
+          "skill_ids": ["windows", "ad"],
+          "factual_source": "Support experience"
+        },
+        {
+          "id": "grp_net",
+          "label": "Redes",
+          "items_text": "TCP/IP, DNS, DHCP, VLAN e cabeamento.",
+          "skill_ids": ["redes"],
+          "factual_source": "Technical diploma"
+        },
+        {
+          "id": "grp_tools",
+          "label": "Atendimento e Produtividade",
+          "items_text": "Help Desk, gestão de chamados, Excel e relatórios técnicos.",
+          "skill_ids": ["chamados", "excel"],
+          "factual_source": "Support experience"
+        }
+      ]
+    },
+    "suporte-en": {
+      "area_id": "suporte-en",
+      "display_name": "Technical Support & Networks (English)",
+      "locale": "en-US",
+      "output_folder": "suporte-en",
+      "output_pdf_filename": "Marina Alves Costa - Resume.pdf",
+      "show_age": false,
+      "show_neighborhood": false,
+      "max_pages": 1,
+      "section_labels": {
+        "summary": "PROFESSIONAL SUMMARY",
+        "education": "EDUCATION",
+        "experience": "EXPERIENCE",
+        "courses": "ADDITIONAL TRAINING",
+        "projects": "PROJECTS",
+        "skills": "TECHNICAL SKILLS",
+        "languages": "LANGUAGES"
+      },
+      "section_order": ["summary", "education", "experience", "skills", "languages"],
+      "default_summary": "IT support professional experienced in customer service, Help Desk, ticket management, and troubleshooting. Skilled in Windows, Active Directory, networking, and workstation maintenance. Advanced English; Associate Degree in Systems Analysis and pursuing Internet Systems.",
+      "summary_prefix": "IT support professional with hands-on Help Desk and ticket management experience.",
+      "allowed_summary_skill_ids": ["windows", "ad", "chamados", "redes"],
+      "preferred_bullet_ids": ["bul_helpdesk_tickets", "bul_ad_email", "bul_maintenance_backups"],
+      "max_bullets_per_experience": 4,
+      "included_course_ids": [],
+      "included_project_ids": [],
+      "skill_groups": [
+        {
+          "id": "grp_en_support",
+          "label": "Customer Support",
+          "items_text": "Help Desk, ticket management, user guidance, and technical documentation.",
+          "skill_ids": ["chamados"],
+          "factual_source": "Support experience"
+        },
+        {
+          "id": "grp_en_systems",
+          "label": "Systems & Networking",
+          "items_text": "Windows, Active Directory, TCP/IP, DNS, DHCP, VLAN, and structured cabling.",
+          "skill_ids": ["windows", "ad", "redes"],
+          "factual_source": "Support & technical diploma"
+        }
+      ]
+    }
+  }
+}

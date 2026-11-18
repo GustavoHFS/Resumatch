@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "id": "demo-greenhouse-board",
+      "type": "greenhouse",
+      "enabled": true,
+      "priority": "secondary",
+      "respect_robots_txt": true,
+      "rate_limit_seconds": 0.5,
+      "board_token": "exampleboard",
+      "company_name": "Example Tech Corp",
+      "entry_level_local_only": true,
+      "max_items": 5,
+      "notes": "Demonstration Greenhouse public board configuration."
+    },
+    {
+      "id": "demo-local-rss",
+      "type": "rss_local",
+      "enabled": false,
+      "priority": "high",
+      "respect_robots_txt": true,
+      "rate_limit_seconds": 1.0,
+      "feeds": [
+        "https://jobs.example.com/feed"
+      ],
+      "seed_pages": [],
+      "max_items": 20,
+      "notes": "Demonstration RSS feed connector (disabled by default in demo mode)."
+    }
+  ]
+}

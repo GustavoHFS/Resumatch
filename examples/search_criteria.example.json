@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "geography": {
+    "allowed_cities": [
+      {
+        "slug": "belo_horizonte",
+        "canonical_name": "Belo Horizonte",
+        "state_code": "MG",
+        "aliases": ["Belo Horizonte", "BH"],
+        "neighborhoods": ["Savassi", "Funcionários", "Centro", "Pampulha", " Lourdes"]
+      },
+      {
+        "slug": "contagem",
+        "canonical_name": "Contagem",
+        "state_code": "MG",
+        "aliases": ["Contagem"],
+        "neighborhoods": ["Eldorado", "Industrial"]
+      }
+    ],
+    "ambiguous_neighborhoods_without_city": ["Centro", "Industrial"],
+    "accept_remote_national": true,
+    "accept_remote_international_if_resident_allowed": true,
+    "reject_broader_metro_if_outside_allowed_cities": true
+  },
+  "schedule": {
+    "earliest_hour": 6,
+    "latest_hour": 18,
+    "soft_latest_hour": 19,
+    "reject_night_or_overnight": true
+  },
+  "contracts": {
+    "accepted_types": ["clt", "estagio_remunerado", "aprendiz"],
+    "rejected_types": ["pj", "mei", "freelancer", "voluntario", "nao_remunerado"],
+    "require_explicit_paid_internship_signal": true,
+    "allow_undisclosed_salary": true
+  },
+  "career_focus": {
+    "entry_level_signals": [
+      "estágio",
+      "estagiário",
+      "trainee",
+      "aprendiz",
+      "jovem aprendiz",
+      "auxiliar",
+      "assistente",
+      "júnior",
+      "junior",
+      "jr",
+      "n1",
+      "intern",
+      "entry-level"
+    ],
+    "out_of_focus_seniority_signals": [
+      "sênior",
+      "senior",
+      "sr",
+      "pleno",
+      "mid-level",
+      "especialista",
+      "tech lead",
+      "gerente",
+      "coordenador",
+      "architect"
+    ],
+    "max_mandatory_experience_months": 24,
+    "preferred_recency_days": 30,
+    "equal_area_priority": true,
+    "max_secondary_sources_per_run": 1
+  },
+  "omissions_policy": {
+    "allow_local_prep_with_operational_omissions": true,
+    "never_assume_unconfirmed_remote_or_paid": true
+  },
+  "role_catalog": {
+    "area_keywords": {
+      "dev": ["Desenvolvimento", "Programador", "Desenvolvedor", "Java", "Backend", "Frontend", "Python", "Software", "QA"],
+      "suporte": ["Suporte Técnico", "Suporte de TI", "Help Desk", "Service Desk", "Redes", "Infraestrutura", "Técnico de Informática"],
+      "dados": ["Dados", "Análise de Dados", "BI", "Business Intelligence", "Power BI", "SQL", "Data Analyst"],
+      "cybersec": ["Cibersegurança", "Segurança da Informação", "Cybersecurity", "SOC", "Controle de Acessos"],
+      "administrativo": ["Administrativo", "Auxiliar Administrativo", "Atendimento", "Backoffice", "Recepção", "Operações"]
+    },
+    "informal_hiring_signals": [
+      "estamos contratando",
+      "envie seu currículo",
+      "trabalhe conosco"
+    ],
+    "grouped_search_queries": [
+      "(estágio OR trainee OR júnior) (TI OR desenvolvimento OR suporte OR dados) (Belo Horizonte OR Contagem)",
+      "(auxiliar OR assistente OR aprendiz) (administrativo OR atendimento OR suporte) (Belo Horizonte OR Contagem)",
+      "(estágio OR júnior) remoto Brasil (desenvolvimento OR suporte OR dados)"
+    ]
+  },
+  "short_prep_rules": [
+    {
+      "term": "JUnit",
+      "aliases": ["JUnit", "JUnit 5"],
+      "prerequisite_skill_ids": ["java"],
+      "study_plan": "Praticar testes unitários com assertions e ciclos básicos no JUnit antes de entrevistas técnicas."
+    },
+    {
+      "term": "GLPI",
+      "aliases": ["GLPI"],
+      "prerequisite_skill_ids": ["chamados", "windows"],
+      "study_plan": "Revisar fluxo de filas, categorias e ciclo de vida de tickets no GLPI."
+    }
+  ],
+  "strategic_exclusions": [
+    {
+      "id": "excl_example_mass_program",
+      "urls": ["https://jobs.example.com/massive-program-001"],
+      "excluded_source_terms": [],
+      "reason": "Example strategic exclusion for demonstration purposes."
+    }
+  ]
+}
