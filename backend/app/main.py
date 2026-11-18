@@ -6,12 +6,15 @@ import shutil
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.jobs_routes import router as jobs_router
 from app.api.routes import router as core_router
 from app.core.config import AppSettings, get_settings
 from app.core.database import create_sqlite_wal_engine, init_db_schema
+from app.services.scheduler_service import DiscoverySchedulerManager
 
 EXAMPLE_BOOTSTRAP_PAIRS = (
     ("master_profile.example.json", "profile/master_profile.json"),
@@ -38,7 +41,10 @@ def _ensure_workspace_files(settings: AppSettings) -> bool:
     return bootstrapped
 
 
-def create_app(settings: AppSettings | None = None) -> FastAPI:
+def create_app(
+    settings: AppSettings | None = None,
+    http_transport: httpx.AsyncBaseTransport | None = None,
+) -> FastAPI:
     resolved_settings = settings or get_settings()
 
     @asynccontextmanager
@@ -46,14 +52,19 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         bootstrapped = _ensure_workspace_files(resolved_settings)
         engine = create_sqlite_wal_engine(resolved_settings.db_path)
         journal_mode = init_db_schema(engine)
+        scheduler = DiscoverySchedulerManager(db_engine=engine, settings=resolved_settings)
+        scheduler.start()
 
         application.state.settings = resolved_settings
         application.state.engine = engine
         application.state.journal_mode = journal_mode
         application.state.bootstrapped_demo = bootstrapped
+        application.state.scheduler = scheduler
+        application.state.http_transport = http_transport
         try:
             yield
         finally:
+            scheduler.shutdown()
             engine.dispose()
 
     application = FastAPI(
@@ -72,6 +83,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     )
 
     application.include_router(core_router)
+    application.include_router(jobs_router)
     return application
 
 
