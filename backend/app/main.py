@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager
+from app.api.applications_routes import router as applications_router
 from app.api.jobs_routes import router as jobs_router
 from app.api.resumes_routes import router as resumes_router
 from app.api.routes import router as core_router
@@ -29,7 +30,7 @@ EXAMPLE_BOOTSTRAP_PAIRS = (
 def _ensure_workspace_files(settings: AppSettings) -> bool:
     """Ensures `data_dir` subdirectories exist; copies demo examples ONLY if missing."""
     data_dir = settings.safe_data_dir
-    for folder in ("profile", "config", "db", "exports"):
+    for folder in ("profile", "config", "db", "exports", "backups"):
         (data_dir / folder).mkdir(parents=True, exist_ok=True)
 
     bootstrapped = False
@@ -46,6 +47,7 @@ def _ensure_workspace_files(settings: AppSettings) -> bool:
 def create_app(
     settings: AppSettings | None = None,
     http_transport: httpx.AsyncBaseTransport | None = None,
+    llm_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
 
@@ -67,6 +69,7 @@ def create_app(
         application.state.scheduler = scheduler
         application.state.pdf_browser_manager = pdf_browser_manager
         application.state.http_transport = http_transport
+        application.state.llm_transport = llm_transport
         try:
             yield
         finally:
@@ -92,6 +95,7 @@ def create_app(
     application.include_router(core_router)
     application.include_router(jobs_router)
     application.include_router(resumes_router)
+    application.include_router(applications_router)
     return application
 
 

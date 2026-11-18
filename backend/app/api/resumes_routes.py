@@ -1,4 +1,4 @@
-"""Phase 3 REST endpoints for deterministic resume composition, HTML preview, and A4 PDF export."""
+"""REST endpoints for deterministic composition, Surgical AI adaptation, HTML preview, and PDF export."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session
 
+from app.adapters.llm.providers import LlmAdapterError
 from app.adapters.pdf.browser_manager import ChromiumPdfBrowserManager, PdfRenderError
 from app.adapters.pdf.html_renderer import render_resume_a4_html
 from app.api.routes import get_app_settings
@@ -15,9 +16,11 @@ from app.core.config import AppSettings
 from app.core.database import get_db_session
 from app.services.resume_service import (
     ResumeComposeRequest,
+    SurgicalAdaptRequest,
     compose_resume_payload,
     export_validated_pdf,
     list_resume_versions,
+    surgical_adapt_resume,
 )
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
@@ -47,6 +50,29 @@ def compose_resume_endpoint(
         "payload": composed.model_dump(mode="json"),
         "triage": triage.model_dump(mode="json") if triage else None,
     }
+
+
+@router.post("/adapt")
+async def surgical_adapt_resume_endpoint(
+    request: Request,
+    payload: SurgicalAdaptRequest,
+    session: Session = Depends(get_db_session),
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    llm_transport = getattr(request.app.state, "llm_transport", None)
+    try:
+        return await surgical_adapt_resume(
+            session=session,
+            settings=settings,
+            req=payload,
+            llm_transport=llm_transport,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LlmAdapterError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/render-html")

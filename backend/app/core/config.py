@@ -56,6 +56,8 @@ class AppSettings(BaseSettings):
     pdf_browser_idle_timeout_seconds: int = 120
 
     llm_provider: Literal["none", "gemini", "groq", "ollama"] = "none"
+    llm_timeout_seconds: float = 15.0
+    max_config_backups: int = 10
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
     groq_api_key: str = ""
@@ -90,6 +92,10 @@ class AppSettings(BaseSettings):
     @property
     def exports_dir(self) -> Path:
         return assert_safe_path(self.safe_data_dir / "exports")
+
+    @property
+    def backups_dir(self) -> Path:
+        return assert_safe_path(self.safe_data_dir / "backups")
 
 
 @lru_cache(maxsize=1)

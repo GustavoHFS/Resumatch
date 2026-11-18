@@ -1,4 +1,4 @@
-"""Phase 1 core REST API endpoints (`/api/health`, `/api/profile`, `/api/config/*`)."""
+"""Core REST API endpoints (`/api/health`, `/api/profile`, `/api/config/*`) with atomic writes."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from app.core.config import AppSettings
 from app.core.database import get_db_session
 from app.models import (
     ApplicationTracking,
+    BlockedCompaniesConfig,
     DiscoveryRun,
     JobOpportunity,
     JobSourcesConfig,
@@ -22,6 +23,7 @@ from app.models import (
     ResumeVersion,
     SearchCriteria,
 )
+from app.services.config_service import atomic_write_validated_json
 
 router = APIRouter(prefix="/api", tags=["core"])
 
@@ -92,11 +94,76 @@ def read_master_profile(
     return _load_validated_json(settings.profile_path, MasterProfile, "MasterProfile")
 
 
+@router.put("/profile")
+def update_master_profile(
+    payload: MasterProfile,
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    backup_name = atomic_write_validated_json(
+        target_path=settings.profile_path,
+        validated_model=payload,
+        backups_dir=settings.backups_dir,
+        max_backups=settings.max_config_backups,
+    )
+    return {
+        "status": "updated",
+        "backup_snapshot": backup_name,
+        "profile": payload.model_dump(mode="json"),
+    }
+
+
 @router.get("/config/criteria", response_model=SearchCriteria)
 def read_search_criteria(
     settings: AppSettings = Depends(get_app_settings),
 ) -> SearchCriteria:
     return _load_validated_json(settings.criteria_path, SearchCriteria, "SearchCriteria")
+
+
+@router.put("/config/criteria")
+def update_search_criteria(
+    payload: SearchCriteria,
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    backup_name = atomic_write_validated_json(
+        target_path=settings.criteria_path,
+        validated_model=payload,
+        backups_dir=settings.backups_dir,
+        max_backups=settings.max_config_backups,
+    )
+    return {
+        "status": "updated",
+        "backup_snapshot": backup_name,
+        "criteria": payload.model_dump(mode="json"),
+    }
+
+
+@router.get("/config/blocked", response_model=BlockedCompaniesConfig)
+def read_blocked_companies(
+    settings: AppSettings = Depends(get_app_settings),
+) -> BlockedCompaniesConfig:
+    return _load_validated_json(
+        settings.blocked_companies_path,
+        BlockedCompaniesConfig,
+        "BlockedCompaniesConfig",
+    )
+
+
+@router.put("/config/blocked")
+def update_blocked_companies(
+    payload: BlockedCompaniesConfig,
+    settings: AppSettings = Depends(get_app_settings),
+) -> dict[str, Any]:
+    backup_name = atomic_write_validated_json(
+        target_path=settings.blocked_companies_path,
+        validated_model=payload,
+        backups_dir=settings.backups_dir,
+        max_backups=settings.max_config_backups,
+    )
+    return {
+        "status": "updated",
+        "backup_snapshot": backup_name,
+        "blocked": payload.model_dump(mode="json"),
+    }
 
 
 @router.get("/config/sources", response_model=JobSourcesConfig)
