@@ -77,7 +77,7 @@ class ProfileLink(StrictModel):
 
 
 class CandidateHeader(StrictModel):
-    full_name: str = Field(min_length=2, max_length=140)
+    full_name: str = Field(default="", max_length=140)
     email: str = Field(default="", max_length=150)
     phone: str = Field(default="", max_length=50)
     city: str = Field(default="", max_length=90)

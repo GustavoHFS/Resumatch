@@ -1,0 +1,111 @@
+{
+  "schema_version": "2.1",
+  "header": {
+    "full_name": "Marina Alves Costa",
+    "email": "marina.costa@example.com",
+    "phone": "(31) 90000-0000",
+    "city": "Belo Horizonte",
+    "state": "Minas Gerais",
+    "neighborhood": "Savassi",
+    "country": "Brasil",
+    "age": 21,
+    "links": [
+      {
+        "label": "GitHub",
+        "url": "https://github.com/marina-costa-example",
+        "display_text": "github.com/marina-costa-example"
+      },
+      {
+        "label": "LinkedIn",
+        "url": "https://www.linkedin.com/in/marina-costa-example",
+        "display_text": "linkedin.com/in/marina-costa-example"
+      }
+    ]
+  },
+  "summary": "Profissional de tecnologia formada em Análise e Desenvolvimento de Sistemas, técnica em Redes de Computadores e graduanda em Sistemas para Internet na UEEX. Experiência prática em suporte técnico corporativo presencial e remoto, administração de Active Directory, manutenção de estações Windows e redes, aliada à formação em desenvolvimento backend (Java, Spring Boot, Python, APIs REST e SQL) e análise de dados (Excel e Power BI). Inglês avançado.",
+  "experiences": [
+    {
+      "id": "exp_horizonte_support",
+      "role": "Técnica de Suporte de TI",
+      "company": "Horizonte Tech Solutions",
+      "period": "Temporário (CLT) · Mar/2024 – Set/2024",
+      "location": "Belo Horizonte, MG",
+      "description": "Atendimento presencial e remoto a usuários corporativos (Help Desk), com registro, triagem, priorização e acompanhamento de chamados em sistema interno.\nAdministração de contas de usuário, permissões de acesso, redefinição de senhas e ingresso de estações no domínio via Active Directory, além de configuração de clientes de e-mail e assinaturas institucionais em HTML.\nManutenção preventiva e corretiva de computadores Windows, formatação e implantação de softwares e antivírus, execução de rotinas de backup, suporte a impressoras e infraestrutura de rede local.\nLevantamento de cotações de equipamentos de TI, organização de planilhas de orçamentos no Excel e elaboração de relatórios técnicos de atendimento."
+    }
+  ],
+  "education": [
+    {
+      "id": "edu_sistemas_internet",
+      "degree": "Tecnólogo em Sistemas para Internet",
+      "institution": "Universidade Estadual de Exemplo (UEEX)",
+      "period": "Fev/2026 – Dez/2028 (em andamento)",
+      "details": "Programa Trilhas Digitais"
+    },
+    {
+      "id": "edu_ads",
+      "degree": "Tecnólogo em Análise e Desenvolvimento de Sistemas",
+      "institution": "Faculdade Tecnológica Horizonte",
+      "period": "Concluído em Dez/2025",
+      "details": ""
+    },
+    {
+      "id": "edu_redes",
+      "degree": "Curso Técnico em Redes de Computadores",
+      "institution": "Escola Técnica Estadual de Minas",
+      "period": "Concluído em Dez/2022",
+      "details": ""
+    }
+  ],
+  "courses": [
+    {
+      "id": "course_agentic_ai",
+      "title": "Arquitetura de Agentes Autônomos com Python",
+      "institution": "Instituto Digital Aberto",
+      "workload": "40 horas",
+      "completion_date": "2026",
+      "description": "Orquestração de fluxos com LLMs, chamadas estruturadas e validação de dados em Python."
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj_helpdesk_metrics",
+      "name": "Painel Acadêmico de Indicadores de Chamados",
+      "url": "https://github.com/marina-costa-example/service-metrics-demo",
+      "description": "API REST em Python e consultas SQL para consolidação de tempo médio de atendimento e categorização de chamados de suporte."
+    }
+  ],
+  "skills": [
+    "Java",
+    "Spring Boot",
+    "APIs REST",
+    "Python",
+    "SQL",
+    "PostgreSQL",
+    "MySQL",
+    "Git e GitHub",
+    "HTML",
+    "CSS",
+    "JavaScript",
+    "TypeScript",
+    "React",
+    "Windows",
+    "Active Directory",
+    "Gestão de chamados (Help Desk)",
+    "Redes de computadores (TCP/IP, DNS, DHCP, VLAN)",
+    "Cabeamento estruturado",
+    "Excel",
+    "Power BI"
+  ],
+  "languages": [
+    {
+      "id": "lang_pt",
+      "language": "Português",
+      "proficiency": "Nativo"
+    },
+    {
+      "id": "lang_en",
+      "language": "Inglês",
+      "proficiency": "Avançado"
+    }
+  ]
+}

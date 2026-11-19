@@ -389,7 +389,7 @@ class WebSearchJobConnector:
         raw_candidates: list[dict[str, Any]] = []
 
         queries = self._default_queries()
-        locations = self.config.locations or ["Recife, PE", "Remoto"]
+        locations = self.config.locations or ["Brasil", "Remoto"]
 
         # Layer 1: Keyless Brazilian Job Meta-Search (`br.talent.com/jobs?date=14`)
         for q in queries[:4]:
@@ -417,7 +417,7 @@ class WebSearchJobConnector:
         # Layer 2: Organic `site:` search (DuckDuckGo HTML) when target_domains are specified and candidates are scarce
         if self.config.target_domains and len(raw_candidates) < self.config.max_items:
             for dom in self.config.target_domains[:2]:
-                dork = f"site:{dom} {queries[0]} Recife OR Remoto"
+                dork = f"site:{dom} {queries[0]} Brasil OR Remoto"
                 ddg_url = f"https://html.duckduckgo.com/html/?q={quote_plus(dork)}&df=w"
                 try:
                     ddg_html = await self.client.get_text(
@@ -474,7 +474,7 @@ class WebSearchJobConnector:
 
             seen_batch.add(sid)
             company = str(item.get("company") or self.config.company_fallback or "").strip() or None
-            location = str(item.get("location") or "").strip() or ("Remoto" if inferred_wp == "remoto" else "Recife, PE")
+            location = str(item.get("location") or "").strip() or ("Remoto" if inferred_wp == "remoto" else "Brasil")
             opp_type = (
                 "banco_talentos"
                 if re.search(r"banco\s+de\s+talentos|talent\s+pool", normalize_text(title))

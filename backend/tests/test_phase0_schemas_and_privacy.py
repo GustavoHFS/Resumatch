@@ -23,7 +23,7 @@ from scripts.install_hooks import HOOK_MARKER, install_pre_commit_hook, is_hook_
 from scripts.migrate_profile_v2 import convert_v1_dict_to_v2
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES_DIR = REPO_ROOT / "examples"
+EXAMPLES_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "demo_examples"
 
 
 def _load_example(filename: str) -> dict:
@@ -319,10 +319,9 @@ class TestDemoBootstrap:
         assert len(created_first) == 4
 
         profile_path = target_data / "profile" / "master_profile.json"
-        custom_marker = profile_path.read_text(encoding="utf-8").replace(
-            "Marina Alves Costa", "Custom Candidate"
-        )
-        profile_path.write_text(custom_marker, encoding="utf-8")
+        custom_profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        custom_profile["header"]["full_name"] = "Custom Candidate"
+        profile_path.write_text(json.dumps(custom_profile), encoding="utf-8")
 
         created_second = bootstrap_demo_workspace(REPO_ROOT, data_dir=target_data)
         assert created_second == []

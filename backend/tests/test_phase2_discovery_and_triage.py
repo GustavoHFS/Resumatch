@@ -37,7 +37,7 @@ from app.models import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES_DIR = REPO_ROOT / "examples"
+EXAMPLES_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "demo_examples"
 
 
 @pytest.fixture
@@ -1136,7 +1136,6 @@ class TestV21RecencyOrderingCrossPortalDedupAndNewConnectors:
             assert after_items[-1]["id"] == "legacy_null_compat_1"
             assert after_items[-1]["published_ago"] == "Data não informada"
             assert after_items[-1]["professional_compatibility"] is not None
-
 
 
 

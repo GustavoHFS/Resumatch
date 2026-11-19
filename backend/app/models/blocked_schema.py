@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from app.models.profile_schema import StrictModel
 
@@ -54,3 +54,10 @@ class BlockedCompanyEntry(StrictModel):
 class BlockedCompaniesConfig(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     companies: list[BlockedCompanyEntry] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_empty_bootstrap(cls, value: object) -> object:
+        if value == {"blocked_companies": []}:
+            return {"companies": []}
+        return value

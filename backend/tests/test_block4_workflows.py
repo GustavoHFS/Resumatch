@@ -17,7 +17,7 @@ from app.core.config import AppSettings
 from app.main import create_app
 from app.models import JobOpportunity, MasterProfile, ResumeDraft, build_draft_header_from_profile
 
-EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
+EXAMPLES_DIR = Path(__file__).resolve().parent / "fixtures" / "demo_examples"
 
 
 @pytest.fixture

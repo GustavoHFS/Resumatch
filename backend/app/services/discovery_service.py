@@ -566,7 +566,7 @@ def _source_without_remote_preference(src_cfg: Any) -> Any:
             if "remot" not in normalize_text(loc)
             and "home office" not in normalize_text(loc)
         ]
-        return src_cfg.model_copy(update={"locations": locations or ["Recife, PE"]})
+        return src_cfg.model_copy(update={"locations": locations or ["Brasil"]})
     if isinstance(src_cfg, HtmlBoardSourceConfig):
         urls = [url for url in src_cfg.search_urls if not _is_remote_only_url(url)]
         if not urls:
@@ -670,7 +670,7 @@ async def execute_discovery_run(
                             locations=(
                                 [src_cfg.location_fallback]
                                 if src_cfg.location_fallback
-                                else ["Recife, PE", "Remoto"]
+                                else ["Brasil", "Remoto"]
                             ),
                             requires_login_for_apply=src_cfg.requires_login_for_apply,
                             max_items=min(8, src_cfg.max_items),

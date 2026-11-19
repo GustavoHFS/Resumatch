@@ -189,7 +189,7 @@ class WebSearchSourceConfig(BaseSourceConfig):
     queries: list[str] = Field(default_factory=list, max_length=20)
     target_domains: list[str] = Field(default_factory=list, max_length=15)
     locations: list[str] = Field(
-        default_factory=lambda: ["Recife, PE", "Jaboatão dos Guararapes, PE", "Remoto"],
+        default_factory=lambda: ["Brasil", "Remoto"],
         max_length=10,
     )
     company_fallback: str | None = Field(default=None, max_length=120)

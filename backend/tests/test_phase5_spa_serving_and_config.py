@@ -15,7 +15,7 @@ from app.core.config import AppSettings
 from app.main import create_app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES_DIR = REPO_ROOT / "examples"
+EXAMPLES_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "demo_examples"
 
 
 class _FakePdfRenderer:
@@ -304,5 +304,4 @@ class TestPhase5SpaServingAndConfigEndpoints:
                 reloaded_sched = (await client2.get("/api/scheduler")).json()
                 assert reloaded_sched["interval_minutes"] == 120
                 assert reloaded_sched["max_requests_budget"] == 55
-
 

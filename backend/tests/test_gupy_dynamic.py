@@ -18,7 +18,7 @@ from app.models import BlockedCompaniesConfig, MasterProfile, SearchCriteria
 from app.models.sources_schema import GupyApiSourceConfig
 from app.services.discovery_service import upsert_and_triage_job
 
-EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
+EXAMPLES = Path(__file__).resolve().parent / "fixtures" / "demo_examples"
 
 
 def _criteria(**changes: object) -> SearchCriteria:

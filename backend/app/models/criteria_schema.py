@@ -18,7 +18,7 @@ class AllowedCityRule(StrictModel):
 
 
 class GeographyPolicy(StrictModel):
-    allowed_cities: list[AllowedCityRule] = Field(min_length=1)
+    allowed_cities: list[AllowedCityRule] = Field(default_factory=list)
     ambiguous_neighborhoods_without_city: list[str] = Field(default_factory=list)
     accept_remote_national: bool = True
     accept_remote_international_if_resident_allowed: bool = True

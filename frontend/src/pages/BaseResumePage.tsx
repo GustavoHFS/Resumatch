@@ -689,7 +689,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   <label className="label">Local</label>
                   <input
                     className="input"
-                    placeholder="Ex.: Recife, PE ou Remoto"
+                    placeholder="Ex.: São Paulo, SP ou Remoto"
                     value={exp.location}
                     onChange={(e) => {
                       const next = [...draft.experiences];

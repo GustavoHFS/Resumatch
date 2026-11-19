@@ -19,7 +19,7 @@ from app.core.config import AppSettings
 from app.services import profile_import_service as svc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLES_DIR = REPO_ROOT / "examples"
+EXAMPLES_DIR = REPO_ROOT / "backend" / "tests" / "fixtures" / "demo_examples"
 WORD_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 

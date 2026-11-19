@@ -501,7 +501,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                 <label className="label">Localização</label>
                 <input
                   className="input"
-                  placeholder="Ex.: Recife, PE ou Remoto"
+                  placeholder="Ex.: São Paulo, SP ou Remoto"
                   value={pasteForm.location ?? ''}
                   onChange={(e) => setPasteForm({ ...pasteForm, location: e.target.value })}
                 />

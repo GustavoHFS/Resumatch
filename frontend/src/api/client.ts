@@ -55,7 +55,7 @@ export function createEmptyMasterProfile(): MasterProfile {
   return {
     schema_version: '2.1',
     header: {
-      full_name: 'Novo Candidato',
+      full_name: '',
       email: '',
       phone: '',
       city: '',
