@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api/client';
+import { api, SERVER_DISCONNECTED_MESSAGE } from '../api/client';
 import { GoogleConnectCard } from '../components/GoogleConnectCard';
 import {
   IconArrowDown,
@@ -69,6 +69,11 @@ export const ResumeStudioPage: React.FC<Props> = ({
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setNotice((current) => current === SERVER_DISCONNECTED_MESSAGE ? null : current);
+    window.addEventListener('resumatch:api-connected', clear);
+    return () => window.removeEventListener('resumatch:api-connected', clear);
+  }, []);
   const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
   const [skillInputs, setSkillInputs] = useState<Record<string, string>>({});
   const [downloadJob, setDownloadJob] = useState<{ id: string; url: string } | null>(null);

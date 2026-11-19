@@ -59,10 +59,14 @@ export const App: React.FC = () => {
         ? crypto.randomUUID()
         : `tab_${Math.random().toString(36).slice(2, 10)}`;
 
-    void api.pingLifecycle(clientId).catch(() => {});
+    const ping = () => { void api.pingLifecycle(clientId).catch(() => {}); };
+    ping();
     const hbTimer = window.setInterval(() => {
-      void api.pingLifecycle(clientId).catch(() => {});
-    }, 4000);
+      ping();
+    }, 15000);
+    const onVisibility = () => { if (document.visibilityState === 'visible') ping(); };
+    window.addEventListener('focus', ping);
+    document.addEventListener('visibilitychange', onVisibility);
 
     const handlePageHide = () => {
       try {
@@ -76,9 +80,13 @@ export const App: React.FC = () => {
     };
 
     window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
     return () => {
       window.clearInterval(hbTimer);
+      window.removeEventListener('focus', ping);
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
     };
   }, []);
 

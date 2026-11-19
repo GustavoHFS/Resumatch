@@ -6,8 +6,7 @@
   * Reuses an already-running compatible Resumatch server.
   * Evicts stale older Resumatch instances on port 8000.
   * Automatically falls back to the next free port in `8001..8010` if port 8000 is used by another app.
-- Launches dedicated `--app` window with Edge Startup Boost flags (`--disable-background-mode`,
-  `--disable-extensions`, `--no-service-autorun`).
+- Opens the default system browser, without a dedicated browser profile.
 """
 
 from __future__ import annotations
@@ -34,8 +33,6 @@ BACKEND_DIR = REPO_ROOT / "backend"
 EXPECTED_API_VERSION = "2.2.0"
 SW_SHOWMINNOACTIVE = 7
 WIN_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
-INACTIVITY_TIMEOUT_SECONDS = 15 * 60
-CLOSED_SIGNAL_GRACE_SECONDS = 4
 
 
 def _ensure_safe_stdio_and_minimized_console() -> None:
@@ -194,52 +191,8 @@ def ensure_frontend_build(force_rebuild: bool = False) -> None:
     )
 
 
-def _find_app_mode_browser() -> str | None:
-    if sys.platform == "win32":
-        win_candidates = [
-            shutil.which("msedge"),
-            shutil.which("chrome"),
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-        ]
-        for path in win_candidates:
-            if path and Path(path).is_file():
-                return str(path)
-    else:
-        for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
-            found = shutil.which(name)
-            if found:
-                return found
-    return None
-
-
 def _open_app_window(url: str) -> None:
-    browser_exe = _find_app_mode_browser()
-    if browser_exe:
-        profile_dir = REPO_ROOT / "user_data" / "browser_profile"
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.Popen(
-                [
-                    browser_exe,
-                    f"--app={url}",
-                    f"--user-data-dir={profile_dir}",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--disable-background-mode",
-                    "--disable-extensions",
-                    "--no-service-autorun",
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=WIN_NO_WINDOW,
-            )
-            return
-        except OSError:
-            pass
-    webbrowser.open(url)
+    webbrowser.open(url.rstrip("/") + "/")
 
 
 def _open_dedicated_window_when_ready(host: str, port: int) -> None:
@@ -252,9 +205,8 @@ def _open_dedicated_window_when_ready(host: str, port: int) -> None:
 
 
 def _monitor_lifecycle_until_closed(host: str, port: int) -> None:
-    """Direct-run fallback: never kill on short ping delays, only on close beacon or 15 min silence."""
+    """The backend status owns the boot/reload/inactivity grace periods."""
     status_url = f"http://{host}:{port}/api/lifecycle/status"
-    closed_checks = 0
     while True:
         time.sleep(1.0)
         try:
@@ -264,17 +216,7 @@ def _monitor_lifecycle_until_closed(host: str, port: int) -> None:
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("closed_signal"):
-            closed_checks += 1
-            if closed_checks >= CLOSED_SIGNAL_GRACE_SECONDS:
-                os._exit(0)
-            continue
-        closed_checks = 0
-        seconds_since = data.get("seconds_since_last_seen")
-        if (
-            isinstance(seconds_since, (int, float))
-            and seconds_since >= INACTIVITY_TIMEOUT_SECONDS
-        ):
+        if data.get("shutdown_ready") is True:
             os._exit(0)
 
 

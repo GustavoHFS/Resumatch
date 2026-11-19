@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, createEmptyMasterProfile, normalizeMasterProfile } from '../api/client';
+import { api, createEmptyMasterProfile, normalizeMasterProfile, SERVER_DISCONNECTED_MESSAGE } from '../api/client';
 import {
   IconChevronDown,
   IconClose,
@@ -112,6 +112,11 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
   const [importing, setImporting] = useState(false);
   const [importingFileName, setImportingFileName] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setNotice((current) => current === SERVER_DISCONNECTED_MESSAGE ? null : current);
+    window.addEventListener('resumatch:api-connected', clear);
+    return () => window.removeEventListener('resumatch:api-connected', clear);
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 

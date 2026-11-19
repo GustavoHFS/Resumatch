@@ -38,7 +38,9 @@ router = APIRouter(prefix="/api", tags=["core"])
 # Long inactivity window: the launcher must never kill the backend because of a short
 # ping delay (minimized window, sleeping laptop, reload, network blip). Only a real
 # close beacon or a full 15-minute silence triggers shutdown.
-CLIENT_INACTIVITY_SECONDS = 15 * 60.0
+CLIENT_INACTIVITY_SECONDS = 30 * 60.0
+BOOT_GRACE_SECONDS = 120.0
+CLOSE_GRACE_SECONDS = 10.0
 
 
 class GoogleConnectRequest(StrictModel):
@@ -329,8 +331,10 @@ def _get_lifecycle_state(request: Request) -> dict[str, Any]:
     if state is None:
         state = {
             "active_clients": {},
+            "booted_at": time.monotonic(),
             "ever_connected": False,
             "last_seen_at": None,
+            "close_requested_at": None,
             "closed_signal": False,
         }
         request.app.state.lifecycle = state
@@ -353,6 +357,7 @@ def lifecycle_ping(
     state["ever_connected"] = True
     state["last_seen_at"] = now
     state["closed_signal"] = False
+    state["close_requested_at"] = None
     return {"status": "ok", "active_clients": len(active)}
 
 
@@ -372,6 +377,7 @@ async def lifecycle_close(request: Request) -> dict[str, Any]:
     active.pop(cid, None)
     if not active:
         state["closed_signal"] = True
+        state["close_requested_at"] = time.monotonic()
     return {"status": "closing", "active_clients": len(active)}
 
 
@@ -384,10 +390,21 @@ def lifecycle_status(request: Request) -> dict[str, Any]:
         active.pop(k, None)
     last_seen = state.get("last_seen_at")
     seconds_since = round(now - last_seen, 2) if isinstance(last_seen, (int, float)) else None
+    boot_age = now - state["booted_at"]
+    close_requested_at = state["close_requested_at"]
+    shutdown_ready = boot_age >= BOOT_GRACE_SECONDS and (
+        (close_requested_at is not None and now - close_requested_at >= CLOSE_GRACE_SECONDS and not active)
+        or (last_seen is not None and now - last_seen >= CLIENT_INACTIVITY_SECONDS and not active)
+        or (last_seen is None and boot_age >= CLIENT_INACTIVITY_SECONDS)
+    )
     return {
         "ever_connected": bool(state["ever_connected"]),
         "active_clients": len(active),
         "seconds_since_last_seen": seconds_since,
         "inactivity_timeout_seconds": int(CLIENT_INACTIVITY_SECONDS),
+        "boot_grace_seconds": int(BOOT_GRACE_SECONDS),
+        "close_grace_seconds": int(CLOSE_GRACE_SECONDS),
+        "close_requested_at": close_requested_at,
+        "shutdown_ready": shutdown_ready,
         "closed_signal": bool(state["closed_signal"]),
     }

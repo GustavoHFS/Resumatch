@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import json
 import shutil
 from contextlib import asynccontextmanager
@@ -129,8 +131,10 @@ def create_app(
         application.state.llm_transport = llm_transport
         application.state.lifecycle = {
             "active_clients": {},
+            "booted_at": time.monotonic(),
             "ever_connected": False,
             "last_seen_at": None,
+            "close_requested_at": None,
             "closed_signal": False,
         }
         try:

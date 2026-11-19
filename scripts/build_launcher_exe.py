@@ -1,14 +1,11 @@
 """Compiles the native Windows GUI launcher `Resumatch.exe` in the repository root.
 
-Hardened against Windows 11 Edge Startup Boost & Port Conflicts:
+Hardened against browser IPC handoff and port conflicts:
 1. Validates `"project":"Resumatch"` + `"version":"2.2.0"` on `/api/health`:
    - Evicts stale older Resumatch processes on port 8000.
    - Falls back automatically to a free port in `8001..8010` if another non-Resumatch app uses port 8000.
-2. Passes `--disable-background-mode --disable-extensions --no-service-autorun --no-first-run --no-default-browser-check`.
-3. Hybrid Lifecycle Guard:
-   - Never kills the backend prematurely if `msedge.exe` delegates via IPC in `< 3.5s` (Startup Boost);
-     automatically switches to monitoring `/api/lifecycle/status` (`ping` / `sendBeacon` close) with a
-     reload grace window and shuts down the backend server tree deterministically when the app closes.
+2. Uses the operating system's default browser and monitors lifecycle status,
+   never treating a browser process exit as a tab close.
 """
 
 from __future__ import annotations
@@ -31,7 +28,6 @@ CSHARP_SOURCE = r"""
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -221,64 +217,22 @@ namespace ResumatchLauncher
             return 8000;
         }
 
-        private const double InactivityTimeoutSeconds = 900.0;
-
-        private static bool ShouldShutdown(int port, ref int closedSignalChecks)
+        private static bool ShouldShutdown(int port)
         {
             string compact = HttpGetJsonCompact("http://127.0.0.1:" + port + "/api/lifecycle/status", 700);
             if (compact == null) return false;
-
-            // A real tab close fires navigator.sendBeacon('/api/lifecycle/close').
-            // Keep a short reload grace window so a page refresh never kills the server.
-            if (compact.Contains("\"closed_signal\":true"))
-            {
-                closedSignalChecks++;
-                return closedSignalChecks >= 4;
-            }
-            closedSignalChecks = 0;
-
-            // Never shut down on short ping delays (minimized window, sleep, network blip).
-            // Only a full 15-minute silence is treated as a real close fallback.
-            Match m = Regex.Match(compact, "\"seconds_since_last_seen\":([0-9.]+)");
-            if (m.Success)
-            {
-                double seconds;
-                if (double.TryParse(
-                    m.Groups[1].Value,
-                    NumberStyles.Float,
-                    CultureInfo.InvariantCulture,
-                    out seconds
-                ) && seconds >= InactivityTimeoutSeconds)
-                {
-                    return true;
-                }
-            }
-            return false;
+            // Backend owns the 120s boot grace, 10s reload grace and 30min inactivity timeout.
+            return compact.Contains("\"shutdown_ready\":true");
         }
 
         private static void MonitorViaHeartbeatUntilClosed(int port, Process backendProc)
         {
-            // Wait up to 60s for the initial tab ping, then keep the server alive through
-            // reloads/background tabs. Shutdown happens only via close beacon or 15 min silence.
-            Stopwatch waitConnect = Stopwatch.StartNew();
-            int closedSignalChecks = 0;
+            // Never infer tab closure from a browser process: Firefox and Chrome may
+            // hand the URL to an existing process and exit immediately.
             while (true)
             {
                 if (backendProc != null && backendProc.HasExited) break;
-
-                string compact = HttpGetJsonCompact("http://127.0.0.1:" + port + "/api/lifecycle/status", 700);
-                if (compact != null)
-                {
-                    bool everConnected = compact.Contains("\"ever_connected\":true");
-                    if (!everConnected)
-                    {
-                        if (waitConnect.ElapsedMilliseconds > 60000) break;
-                    }
-                    else if (ShouldShutdown(port, ref closedSignalChecks))
-                    {
-                        break;
-                    }
-                }
+                if (ShouldShutdown(port)) break;
                 Thread.Sleep(1000);
             }
         }
@@ -293,26 +247,6 @@ namespace ResumatchLauncher
             foreach (string c in candidates)
             {
                 if (File.Exists(c)) return c;
-            }
-            return null;
-        }
-
-        private static string FindAppBrowser()
-        {
-            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string progFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string progFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-
-            string[] candidates = new string[]
-            {
-                Path.Combine(progFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
-                Path.Combine(progFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
-                Path.Combine(progFiles, "Google", "Chrome", "Application", "chrome.exe"),
-                Path.Combine(localApp, "Google", "Chrome", "Application", "chrome.exe")
-            };
-            foreach (string c in candidates)
-            {
-                if (!string.IsNullOrEmpty(c) && File.Exists(c)) return c;
             }
             return null;
         }
@@ -387,56 +321,14 @@ namespace ResumatchLauncher
                     return 1;
                 }
 
-                string browserExe = FindAppBrowser();
-                if (browserExe != null)
+                Process.Start(new ProcessStartInfo
                 {
-                    string profileDir = Path.Combine(repoRoot, "user_data", "browser_profile");
-                    Directory.CreateDirectory(profileDir);
-
-                    ProcessStartInfo uiPsi = new ProcessStartInfo
-                    {
-                        FileName = browserExe,
-                        Arguments = "--app=" + appUrl
-                            + " --user-data-dir=\"" + profileDir + "\""
-                            + " --no-first-run --no-default-browser-check"
-                            + " --disable-background-mode --disable-extensions --no-service-autorun",
-                        WorkingDirectory = repoRoot,
-                        CreateNoWindow = false,
-                        UseShellExecute = false
-                    };
-
-                    using (Process uiProc = Process.Start(uiPsi))
-                    {
-                        if (uiProc != null)
-                        {
-                            int closedSignalChecks = 0;
-                            while (!uiProc.HasExited)
-                            {
-                                if (uiProc.WaitForExit(500)) break;
-                                if (ShouldShutdown(port, ref closedSignalChecks)) break;
-                            }
-                        }
-                    }
-
-                    // Edge/Chrome Startup Boost may hand the window to an existing background
-                    // process and exit this handle immediately. Never kill on that handoff:
-                    // monitor the tab heartbeat and wait for a real close beacon or 15 min silence.
-                    if (startedBackendHere)
-                    {
-                        MonitorViaHeartbeatUntilClosed(port, backendProc);
-                    }
-                }
-                else
+                    FileName = appUrl + "/",
+                    UseShellExecute = true
+                });
+                if (startedBackendHere)
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = appUrl,
-                        UseShellExecute = true
-                    });
-                    if (startedBackendHere)
-                    {
-                        MonitorViaHeartbeatUntilClosed(port, backendProc);
-                    }
+                    MonitorViaHeartbeatUntilClosed(port, backendProc);
                 }
             }
             finally

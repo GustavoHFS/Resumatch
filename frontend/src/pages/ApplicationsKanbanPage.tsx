@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api, SERVER_DISCONNECTED_MESSAGE } from '../api/client';
 import { IconClose, IconExternal, IconFile, IconTrash } from '../components/Icons';
 import type { ApplicationCard, KanbanStage } from '../types/api';
 import styles from './ApplicationsKanbanPage.module.css';
@@ -48,6 +48,11 @@ const bucketForStage = (stage: KanbanStage): ColumnBucket => {
 export const ApplicationsKanbanPage: React.FC = () => {
   const [cards, setCards] = useState<ApplicationCard[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setNotice((current) => current === SERVER_DISCONNECTED_MESSAGE ? null : current);
+    window.addEventListener('resumatch:api-connected', clear);
+    return () => window.removeEventListener('resumatch:api-connected', clear);
+  }, []);
 
   const loadCards = useCallback(async () => {
     try {

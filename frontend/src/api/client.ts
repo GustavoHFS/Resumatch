@@ -228,20 +228,39 @@ async function requestJson<T>(
 
   const isFormData = init?.body instanceof FormData;
   try {
-    const response = await fetch(path, {
-      ...init,
-      signal: controller.signal,
-      headers: isFormData
-        ? init?.headers
-        : {
-            'Content-Type': 'application/json',
-            ...(init?.headers ?? {}),
-          },
-    });
+    let response: Response;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        response = await fetch(path, {
+          ...init,
+          signal: controller.signal,
+          headers: isFormData
+            ? init?.headers
+            : { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+        });
+        break;
+      } catch (err) {
+        if (controller.signal.aborted || attempt >= 1 || !NETWORK_ERROR_PATTERN.test(
+          err instanceof Error ? err.message : String(err)
+        )) throw err;
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(() => {
+            controller.signal.removeEventListener('abort', onAbort);
+            resolve();
+          }, 400);
+          const onAbort = () => {
+            window.clearTimeout(timer);
+            reject(new DOMException('Cancelado', 'AbortError'));
+          };
+          controller.signal.addEventListener('abort', onAbort, { once: true });
+        });
+      }
+    }
 
     if (!response.ok) {
       throw new ApiClientError(await parseErrorDetail(response), response.status);
     }
+    window.dispatchEvent(new Event('resumatch:api-connected'));
     return (await response.json()) as T;
   } catch (err) {
     if (err instanceof ApiClientError) {

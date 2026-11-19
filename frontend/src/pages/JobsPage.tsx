@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api, SERVER_DISCONNECTED_MESSAGE } from '../api/client';
 import {
   IconClose,
   IconExternal,
@@ -74,6 +74,11 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const clear = () => setNotice((current) => current === SERVER_DISCONNECTED_MESSAGE ? null : current);
+    window.addEventListener('resumatch:api-connected', clear);
+    return () => window.removeEventListener('resumatch:api-connected', clear);
+  }, []);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [savingPaste, setSavingPaste] = useState(false);
   const [pasteForm, setPasteForm] = useState<AssistedImportPayload>({
