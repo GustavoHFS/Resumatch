@@ -1,5 +1,6 @@
 {
   "schema_version": "1.0",
+  "include_remote": true,
   "geography": {
     "allowed_cities": [
       {
@@ -76,8 +77,7 @@
       "dev": ["Desenvolvimento", "Programador", "Desenvolvedor", "Java", "Backend", "Frontend", "Python", "Software", "QA"],
       "suporte": ["Suporte Técnico", "Suporte de TI", "Help Desk", "Service Desk", "Redes", "Infraestrutura", "Técnico de Informática"],
       "dados": ["Dados", "Análise de Dados", "BI", "Business Intelligence", "Power BI", "SQL", "Data Analyst"],
-      "cybersec": ["Cibersegurança", "Segurança da Informação", "Cybersecurity", "SOC", "Controle de Acessos"],
-      "administrativo": ["Administrativo", "Auxiliar Administrativo", "Atendimento", "Backoffice", "Recepção", "Operações"]
+      "cybersec": ["Cibersegurança", "Segurança da Informação", "Cybersecurity", "SOC", "Controle de Acessos"]
     },
     "informal_hiring_signals": [
       "estamos contratando",
@@ -86,7 +86,7 @@
     ],
     "grouped_search_queries": [
       "(estágio OR trainee OR júnior) (TI OR desenvolvimento OR suporte OR dados) (Belo Horizonte OR Contagem)",
-      "(auxiliar OR assistente OR aprendiz) (administrativo OR atendimento OR suporte) (Belo Horizonte OR Contagem)",
+      "(auxiliar OR assistente OR técnico OR aprendiz) (suporte OR redes OR infraestrutura OR segurança) (Belo Horizonte OR Contagem)",
       "(estágio OR júnior) remoto Brasil (desenvolvimento OR suporte OR dados)"
     ]
   },

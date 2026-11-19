@@ -7,7 +7,12 @@ import {
   IconSearch,
   IconSparkles,
 } from '../components/Icons';
-import type { AssistedImportPayload, JobDetailResponse, JobListItem } from '../types/api';
+import type {
+  AssistedImportPayload,
+  JobDetailResponse,
+  JobListItem,
+  SearchCriteria,
+} from '../types/api';
 import styles from './JobsPage.module.css';
 
 interface Props {
@@ -23,20 +28,32 @@ const RECENCY_OPTIONS = [
 
 const AREA_OPTIONS = [
   { value: '', label: 'Todas as áreas' },
+  { value: 'ti_geral', label: 'TI Geral / Sistemas' },
+  { value: 'suporte', label: 'Suporte & Infraestrutura' },
   { value: 'dev', label: 'Desenvolvimento' },
-  { value: 'suporte', label: 'Suporte e Redes' },
-  { value: 'dados', label: 'Dados e BI' },
-  { value: 'cybersec', label: 'Segurança da Informação' },
-  { value: 'administrativo', label: 'Administrativo' },
+  { value: 'dados', label: 'Dados & BI' },
+  { value: 'cybersec', label: 'Redes & Segurança' },
 ];
 
-const COMPATIBILITY_OPTIONS = [
-  { value: '', label: 'Todos os status' },
-  { value: 'compativel', label: 'Compatíveis' },
-  { value: 'compativel_com_preparacao', label: 'Compatíveis com estudo rápido' },
-  { value: 'insuficiente_para_avaliar', label: 'Descrição incompleta' },
-  { value: 'incompativel_por_impedimento_concreto', label: 'Fora dos critérios' },
-];
+function buildJobMeta(job: JobListItem): string {
+  const parts: string[] = [job.company || 'Empresa não informada'];
+  const location = (job.location || '').trim();
+  const normalizedLocation = location
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  if (location && normalizedLocation !== 'remoto' && normalizedLocation !== 'remote') {
+    parts.push(location);
+  }
+  const workplace = job.labels?.workplace_label;
+  if (job.workplace_mode && workplace && workplace !== 'Modalidade não informada') {
+    parts.push(workplace);
+  }
+  if (job.source_label) {
+    parts.push(`Via ${job.source_label}`);
+  }
+  return parts.join(' · ');
+}
 
 export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
   const [jobs, setJobs] = useState<JobListItem[]>([]);
@@ -46,7 +63,9 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
   const [search, setSearch] = useState('');
   const [recencyFilter, setRecencyFilter] = useState('14d');
   const [areaFilter, setAreaFilter] = useState('');
-  const [compatFilter, setCompatFilter] = useState('');
+  const [criteria, setCriteria] = useState<SearchCriteria | null>(null);
+  const [remoteActive, setRemoteActive] = useState(true);
+  const [savingRemote, setSavingRemote] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<JobDetailResponse | null>(null);
@@ -71,7 +90,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
         search: search || undefined,
         recency: recencyFilter,
         area_id: areaFilter || undefined,
-        compatibility: compatFilter || undefined,
+        include_remote: remoteActive ? undefined : false,
         limit: 100,
       });
       setJobs(res.items);
@@ -85,11 +104,50 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
     } finally {
       setLoading(false);
     }
-  }, [search, recencyFilter, areaFilter, compatFilter, selectedId]);
+  }, [search, recencyFilter, areaFilter, remoteActive, selectedId]);
 
   useEffect(() => {
     void loadJobs();
   }, [loadJobs]);
+
+  useEffect(() => {
+    api
+      .getCriteria()
+      .then((loaded) => {
+        setCriteria(loaded);
+        setRemoteActive(loaded.include_remote !== false);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleToggleRemote = async () => {
+    const next = !remoteActive;
+    setRemoteActive(next);
+    setSavingRemote(true);
+    try {
+      let current = criteria;
+      if (!current) {
+        current = await api.getCriteria();
+      }
+      const updated: SearchCriteria = { ...current, include_remote: next };
+      await api.saveCriteria(updated);
+      setCriteria(updated);
+      setNotice(
+        next
+          ? 'Vagas remotas ativadas nas próximas buscas.'
+          : 'Vagas remotas ocultadas nas próximas buscas.'
+      );
+    } catch (err) {
+      setRemoteActive(!next);
+      setNotice(err instanceof Error ? err.message : 'Não foi possível salvar a preferência.');
+    } finally {
+      setSavingRemote(false);
+    }
+  };
+
+  const visibleJobs = remoteActive
+    ? jobs
+    : jobs.filter((job) => job.workplace_mode !== 'remoto');
 
   useEffect(() => {
     if (!selectedId) {
@@ -218,18 +276,16 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
           ))}
         </select>
 
-        <select
-          className="select"
-          value={compatFilter}
-          onChange={(e) => setCompatFilter(e.target.value)}
-          aria-label="Filtrar por compatibilidade"
+        <button
+          type="button"
+          className="btnSubtle"
+          aria-pressed={remoteActive}
+          disabled={savingRemote}
+          onClick={() => void handleToggleRemote()}
+          title="Incluir ou ocultar vagas remotas na lista e nas próximas buscas"
         >
-          {COMPATIBILITY_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+          <span>{remoteActive ? 'Vagas Remotas: Ativas' : 'Vagas Remotas: Ocultas'}</span>
+        </button>
 
         <button
           type="button"
@@ -268,15 +324,15 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
       {/* Editorial List + Clean Side Panel */}
       <div className={styles.split}>
         <div className={`panel ${styles.listPanel}`}>
-          {loading && jobs.length === 0 ? (
+          {loading && visibleJobs.length === 0 ? (
             <div className={styles.empty}>Carregando vagas...</div>
-          ) : jobs.length === 0 ? (
+          ) : visibleJobs.length === 0 ? (
             <div className={styles.empty}>
               Nenhuma vaga listada para este filtro. Use &ldquo;Buscar Vagas&rdquo; ou &ldquo;Colar
               Vaga&rdquo;.
             </div>
           ) : (
-            jobs.map((job) => (
+            visibleJobs.map((job) => (
               <button
                 key={job.id}
                 type="button"
@@ -289,12 +345,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                   <span className={styles.jobTitle}>{job.title}</span>
                   <span className={styles.publishedBadge}>{job.published_ago}</span>
                 </div>
-                <div className={styles.jobSub}>
-                  {job.company || 'Empresa não informada'}
-                  {job.location ? ` · ${job.location}` : ''}
-                  {job.workplace_mode ? ` · ${job.labels.workplace_label}` : ''}
-                  {` · ${job.labels.compatibility_label}`}
-                </div>
+                <div className={styles.jobSub}>{buildJobMeta(job)}</div>
               </button>
             ))
           )}
@@ -313,12 +364,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                   {detail.opportunity.published_ago && (
                     <span className={styles.publishedBadge}>{detail.opportunity.published_ago}</span>
                   )}
-                  <span>{detail.opportunity.company || 'Empresa não informada'}</span>
-                  {detail.opportunity.location && <span>· {detail.opportunity.location}</span>}
-                  {detail.opportunity.workplace_mode && (
-                    <span>· {detail.opportunity.labels.workplace_label}</span>
-                  )}
-                  <span>· {detail.opportunity.labels.compatibility_label}</span>
+                  <span>{buildJobMeta(detail.opportunity)}</span>
                 </div>
 
                 <div className={styles.ctaRow}>

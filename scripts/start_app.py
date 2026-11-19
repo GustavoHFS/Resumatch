@@ -34,6 +34,8 @@ BACKEND_DIR = REPO_ROOT / "backend"
 EXPECTED_API_VERSION = "2.2.0"
 SW_SHOWMINNOACTIVE = 7
 WIN_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+INACTIVITY_TIMEOUT_SECONDS = 15 * 60
+CLOSED_SIGNAL_GRACE_SECONDS = 4
 
 
 def _ensure_safe_stdio_and_minimized_console() -> None:
@@ -249,6 +251,33 @@ def _open_dedicated_window_when_ready(host: str, port: int) -> None:
     _open_app_window(url)
 
 
+def _monitor_lifecycle_until_closed(host: str, port: int) -> None:
+    """Direct-run fallback: never kill on short ping delays, only on close beacon or 15 min silence."""
+    status_url = f"http://{host}:{port}/api/lifecycle/status"
+    closed_checks = 0
+    while True:
+        time.sleep(1.0)
+        try:
+            with urllib.request.urlopen(status_url, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("closed_signal"):
+            closed_checks += 1
+            if closed_checks >= CLOSED_SIGNAL_GRACE_SECONDS:
+                os._exit(0)
+            continue
+        closed_checks = 0
+        seconds_since = data.get("seconds_since_last_seen")
+        if (
+            isinstance(seconds_since, (int, float))
+            and seconds_since >= INACTIVITY_TIMEOUT_SECONDS
+        ):
+            os._exit(0)
+
+
 def main() -> int:
     _ensure_safe_stdio_and_minimized_console()
 
@@ -275,6 +304,11 @@ def main() -> int:
     if not args.no_browser:
         threading.Thread(
             target=_open_dedicated_window_when_ready,
+            args=(args.host, selected_port),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=_monitor_lifecycle_until_closed,
             args=(args.host, selected_port),
             daemon=True,
         ).start()

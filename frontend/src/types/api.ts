@@ -58,6 +58,8 @@ export interface JobListItem {
   title: string;
   original_url: string;
   canonical_url: string | null;
+  primary_source?: string | null;
+  source_label: string;
   location: string | null;
   workplace_mode: string | null;
   contract_type: string | null;
@@ -336,6 +338,7 @@ export interface ApplicationCard {
 
 export interface SearchCriteria {
   schema_version: '1.0';
+  include_remote: boolean;
   geography: {
     allowed_cities: Array<{
       slug: string;

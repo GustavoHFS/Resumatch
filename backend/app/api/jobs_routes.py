@@ -18,7 +18,12 @@ from datetime import datetime, timedelta, timezone
 from app.core.database import get_db_session
 from app.domain.date_utils import format_published_ago_pt, to_canonical_utc_iso
 from app.domain.labels_pt import build_job_human_labels
-from app.domain.triage_engine import DeterministicTriageEngine, RawJobInput, TriageResult
+from app.domain.triage_engine import (
+    DeterministicTriageEngine,
+    RawJobInput,
+    TriageResult,
+    is_manual_source,
+)
 from app.models import (
     ApplicationTracking,
     DiscoveryRun,
@@ -58,6 +63,61 @@ def get_scheduler_manager(request: Request) -> DiscoverySchedulerManager:
     return request.app.state.scheduler
 
 
+SOURCE_LABEL_MARKERS: tuple[tuple[str, str], ...] = (
+    ("gupy", "Gupy"),
+    ("linkedin", "LinkedIn"),
+    ("github", "GitHub Vagas"),
+    ("inhire", "Inhire"),
+    ("empregospernambuco", "Empregos PE"),
+    ("empregos_pe", "Empregos PE"),
+    ("empregos-pernambuco", "Empregos PE"),
+    ("empregare", "Empregare"),
+    ("greenhouse", "Greenhouse"),
+    ("lever", "Lever"),
+    ("ashby", "Ashby"),
+    ("recruitee", "Recruitee"),
+    ("workable", "Workable"),
+    ("remotar", "Remotar"),
+    ("trampos", "Trampos"),
+    ("programathor", "Programathor"),
+    ("geekhunter", "GeekHunter"),
+    ("coodesh", "Coodesh"),
+    ("catho", "Catho"),
+    ("infojobs", "InfoJobs"),
+    ("vagas.com", "Vagas.com.br"),
+    ("vagas_com", "Vagas.com.br"),
+    ("bne", "BNE"),
+    ("solides", "Sólides"),
+    ("indeed", "Indeed"),
+    ("glassdoor", "Glassdoor"),
+    ("trabalha_brasil", "Trabalha Brasil"),
+    ("trabalhabrasil", "Trabalha Brasil"),
+    ("divulgavagas", "DivulgaVagas"),
+    ("jooble", "Jooble"),
+    ("jobvite", "Liferay"),
+    ("carreira_publica", "Portal da empresa"),
+    ("paginas_publicas", "Portal da empresa"),
+    ("rss_local", "Empregos PE"),
+    ("web_search", "Portal externo"),
+)
+
+
+def build_source_label(primary_source: str | None, url: str | None = None) -> str:
+    """Friendly Portuguese label for the job's original source (never snake_case)."""
+    source = (primary_source or "").strip()
+    if is_manual_source(source):
+        return "Adicionada manualmente"
+    blob = f"{source} {url or ''}".lower()
+    for marker, label in SOURCE_LABEL_MARKERS:
+        if marker in blob:
+            return label
+    if ":" in source:
+        tail = source.split(":", 1)[1].replace("_", " ").replace("-", " ").strip()
+        if tail:
+            return tail[:1].upper() + tail[1:]
+    return "Portal externo"
+
+
 @router.get("/jobs")
 def list_jobs(
     area_id: str | None = None,
@@ -67,6 +127,7 @@ def list_jobs(
     service_tier: int | None = Query(default=None, ge=1, le=3),
     method: str | None = None,
     recency: str | None = None,
+    include_remote: bool | None = None,
     search: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
@@ -85,6 +146,13 @@ def list_jobs(
         filters.append(JobOpportunity.service_tier == service_tier)
     if method:
         filters.append(JobOpportunity.application_method == method)
+    if include_remote is False:
+        filters.append(
+            or_(
+                JobOpportunity.workplace_mode.is_(None),  # type: ignore[union-attr]
+                JobOpportunity.workplace_mode != "remoto",
+            )
+        )
     if recency in {"24h", "7d", "14d"}:
         now_utc = datetime.now(timezone.utc)
         delta = (
@@ -134,6 +202,8 @@ def list_jobs(
             "title": r.title,
             "original_url": r.original_url,
             "canonical_url": r.canonical_url,
+            "primary_source": r.primary_source,
+            "source_label": build_source_label(r.primary_source, r.original_url),
             "location": r.location,
             "workplace_mode": r.workplace_mode,
             "contract_type": r.contract_type,
@@ -188,6 +258,7 @@ def get_job_detail(
 
     opp_dict = opp.model_dump(mode="json")
     opp_dict["published_ago"] = format_published_ago_pt(opp.published_at)
+    opp_dict["source_label"] = build_source_label(opp.primary_source, opp.original_url)
     opp_dict["labels"] = build_job_human_labels(
         classification=opp.classification,
         compatibility=opp.professional_compatibility,

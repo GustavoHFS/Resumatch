@@ -37,6 +37,8 @@ from app.domain.triage_engine import (
     canonicalize_url,
     compute_cross_portal_signature,
     compute_job_fingerprint,
+    is_manual_source,
+    is_non_tech_role,
     normalize_text,
 )
 from app.models import (
@@ -48,6 +50,7 @@ from app.models import (
     JobOpportunity,
     JobSourcesConfig,
     MasterProfile,
+    ResumeVersion,
     SearchCriteria,
 )
 from app.models.profile_schema import StrictModel
@@ -504,6 +507,38 @@ def _load_seen_source_map(session: Session) -> dict[str, dict[str, str]]:
     return seen
 
 
+REMOTE_ONLY_URL_MARKERS = (
+    "home-office",
+    "home_office",
+    "remoto",
+    "remote",
+    "workplaceType[]=remote".lower(),
+)
+
+
+def _is_remote_only_url(url: str) -> bool:
+    lowered = (url or "").lower()
+    return any(marker in lowered for marker in REMOTE_ONLY_URL_MARKERS)
+
+
+def _source_without_remote_preference(src_cfg: Any) -> Any:
+    """Returns a source copy with remote-only URLs/locations removed, or None if nothing remains."""
+    if isinstance(src_cfg, WebSearchSourceConfig):
+        locations = [
+            loc
+            for loc in src_cfg.locations
+            if "remot" not in normalize_text(loc)
+            and "home office" not in normalize_text(loc)
+        ]
+        return src_cfg.model_copy(update={"locations": locations or ["Recife, PE"]})
+    if isinstance(src_cfg, HtmlBoardSourceConfig):
+        urls = [url for url in src_cfg.search_urls if not _is_remote_only_url(url)]
+        if not urls:
+            return None
+        return src_cfg.model_copy(update={"search_urls": urls})
+    return src_cfg
+
+
 async def execute_discovery_run(
     db_engine: Engine,
     settings: AppSettings,
@@ -528,6 +563,11 @@ async def execute_discovery_run(
     selected_sources = []
     secondary_used = 0
     for src_cfg in raw_selected:
+        if not criteria.include_remote:
+            restricted = _source_without_remote_preference(src_cfg)
+            if restricted is None:
+                continue
+            src_cfg = restricted
         if src_cfg.priority == "secondary" and source_ids is None:
             if secondary_used >= criteria.career_focus.max_secondary_sources_per_run:
                 continue
@@ -640,6 +680,8 @@ async def execute_discovery_run(
     new_count = 0
     discarded_old_count = 0
     discarded_garbage_count = 0
+    discarded_non_tech_count = 0
+    discarded_remote_count = 0
     unique_ids: set[str] = set()
     classifications: Counter[str] = Counter()
     tiers: Counter[int] = Counter()
@@ -652,6 +694,14 @@ async def execute_discovery_run(
             if not is_published_within_days(raw_job.published_at, max_days=14):
                 discarded_old_count += 1
                 continue
+            if not is_manual_source(raw_job.source) and is_non_tech_role(raw_job.title):
+                discarded_non_tech_count += 1
+                continue
+            if not criteria.include_remote:
+                remote_probe = triage_engine.evaluate(raw_job)
+                if remote_probe.inferred_workplace_mode == "remoto":
+                    discarded_remote_count += 1
+                    continue
             opp, triage, created = upsert_and_triage_job(
                 session=session,
                 triage_engine=triage_engine,
@@ -667,7 +717,13 @@ async def execute_discovery_run(
 
         finished_at = utc_now_iso()
         run_id = str(uuid4())
-        recent_extracted = len(discovered_jobs) - discarded_old_count - discarded_garbage_count
+        recent_extracted = (
+            len(discovered_jobs)
+            - discarded_old_count
+            - discarded_garbage_count
+            - discarded_non_tech_count
+            - discarded_remote_count
+        )
         summary = {
             "id": run_id,
             "started_at": started_at,
@@ -677,6 +733,8 @@ async def execute_discovery_run(
             "extracted_count": recent_extracted,
             "discarded_older_than_14d": discarded_old_count,
             "discarded_garbage_count": discarded_garbage_count,
+            "discarded_non_tech_count": discarded_non_tech_count,
+            "discarded_remote_count": discarded_remote_count,
             "unique_count": len(unique_ids),
             "new_count": new_count,
             "deduplicated_existing_count": max(0, recent_extracted - new_count),
@@ -721,6 +779,7 @@ def reconcile_triage_in_sqlite(
     triage_engine = DeterministicTriageEngine(criteria=criteria, blocked=blocked, profile=profile)
 
     purged_garbage = 0
+    purged_non_tech = 0
     recalculated = 0
     previously_null_compat = 0
     classifications: Counter[str] = Counter()
@@ -734,12 +793,28 @@ def reconcile_triage_in_sqlite(
                 "descoberta",
                 "candidatura_a_preparar",
             }
-            if not is_user_progressed and is_garbage_job_candidate(opp.title, opp.original_url):
+            should_purge = not is_user_progressed and (
+                is_garbage_job_candidate(opp.title, opp.original_url)
+                or (
+                    not is_manual_source(opp.primary_source)
+                    and is_non_tech_role(opp.title)
+                )
+            )
+            if should_purge:
                 session.exec(delete(JobObservation).where(JobObservation.opportunity_id == opp.id))
+                session.exec(
+                    delete(ApplicationEvent).where(ApplicationEvent.opportunity_id == opp.id)
+                )
+                session.exec(
+                    delete(ResumeVersion).where(ResumeVersion.opportunity_id == opp.id)
+                )
                 if tracking is not None:
                     session.delete(tracking)
                 session.delete(opp)
-                purged_garbage += 1
+                if is_non_tech_role(opp.title) and not is_manual_source(opp.primary_source):
+                    purged_non_tech += 1
+                else:
+                    purged_garbage += 1
                 continue
 
             if opp.professional_compatibility is None:
@@ -802,6 +877,7 @@ def reconcile_triage_in_sqlite(
     return {
         "backup_snapshot": backup_filename,
         "purged_garbage_count": purged_garbage,
+        "purged_non_tech_count": purged_non_tech,
         "recalculated_count": recalculated,
         "previously_null_compatibility_count": previously_null_compat,
         "classifications": dict(classifications),

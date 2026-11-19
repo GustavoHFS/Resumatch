@@ -18,6 +18,7 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from pypdf import PdfReader
@@ -77,6 +78,42 @@ def _normalize_https_url(raw_url: str) -> str | None:
     return cleaned[:300]
 
 
+def _canonical_url_key(url: str) -> str:
+    """Stable dedupe key: lower-case host without leading ``www.`` and trailing slash."""
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:
+        return url.strip().lower()
+
+    host = (parts.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    netloc = host
+    if port and port not in (80, 443):
+        netloc = f"{host}:{port}"
+    path = parts.path.rstrip("/")
+    key = f"{parts.scheme.lower()}://{netloc}{path}"
+    if parts.query:
+        key += f"?{parts.query}"
+    if parts.fragment:
+        key += f"#{parts.fragment}"
+    return key
+
+
+def _dedupe_urls(urls: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if not url:
+            continue
+        key = _canonical_url_key(url)
+        if key not in seen:
+            seen.add(key)
+            unique.append(url)
+    return unique
+
+
 def _infer_link_label(url: str) -> str:
     low = url.lower()
     if "github.com" in low:
@@ -86,6 +123,57 @@ def _infer_link_label(url: str) -> str:
     if "gitlab.com" in low:
         return "GitLab"
     return "Portfólio"
+
+
+_PDF_CONTINUATION_CONNECTORS = {
+    "a", "à", "às", "ao", "aos", "as", "o", "os", "um", "uma", "uns", "umas",
+    "de", "da", "das", "do", "dos", "em", "na", "nas", "no", "nos",
+    "e", "ou", "que", "como", "com", "por", "para", "sem", "sob", "sobre",
+    "entre", "após", "ate", "até", "desde", "durante", "nos", "pelos", "pela",
+    "pelo", "nas", "num", "numa", "se", "quando", "onde", "cujo", "cuja",
+}
+
+_PDF_BULLET_PREFIXES = ("•", "*", "- ", "– ", "— ")
+
+
+def _should_rejoin_pdf_lines(previous: str, following: str) -> bool:
+    """Only joins an unmistakable wrapped sentence continuation.
+
+    A continuation needs both a dangling connector/comma on the previous line and a
+    lower-case start on the next one. Headings, record headers, metadata lines and
+    distinct bullets keep their hard break.
+    """
+    prev = previous.rstrip()
+    nxt = following.lstrip()
+    if not prev or not nxt:
+        return False
+    if nxt.startswith(_PDF_BULLET_PREFIXES):
+        return False
+    if not nxt[0].islower():
+        return False
+    if prev.endswith((":", ";", ".", "!", "?", "(", "[")):
+        return False
+    if prev.endswith(","):
+        return True
+
+    last_word = re.split(r"\s+", prev)[-1].strip("([\"'").casefold()
+    last_word = _strip_accents(last_word)
+    return last_word in _PDF_CONTINUATION_CONNECTORS
+
+
+def _rejoin_pdf_line_breaks(text: str) -> str:
+    """Rebuilds visual PDF wraps without ever merging paragraphs, pages or bullets."""
+    output: list[str] = []
+    for raw_line in text.split("\n"):
+        line = raw_line.rstrip()
+        if not line.strip():
+            output.append("")
+            continue
+        if output and output[-1].strip() and _should_rejoin_pdf_lines(output[-1], line):
+            output[-1] = output[-1].rstrip() + " " + line.lstrip()
+        else:
+            output.append(line)
+    return "\n".join(output)
 
 
 def extract_text_and_links_from_pdf(raw_bytes: bytes) -> tuple[str, list[str]]:
@@ -113,8 +201,8 @@ def extract_text_and_links_from_pdf(raw_bytes: bytes) -> tuple[str, list[str]]:
                         if norm_u:
                             uris.append(norm_u)
 
-    joined = "\n\n".join(pages_text).strip()
-    return joined, list(dict.fromkeys(uris))
+    joined = unicodedata.normalize("NFKC", "\n\n".join(pages_text).strip())
+    return _rejoin_pdf_line_breaks(joined), _dedupe_urls(uris)
 
 
 def _extract_paragraph_text(p_elem: ET.Element) -> str:
@@ -126,7 +214,73 @@ def _extract_paragraph_text(p_elem: ET.Element) -> str:
             parts.append(" ")
         elif node.tag == f"{WORD_NS}br":
             parts.append("\n")
-    return "".join(parts).strip()
+    return unicodedata.normalize("NFKC", "".join(parts)).strip()
+
+
+def _cell_blocks(cell: ET.Element) -> list[str]:
+    """Paragraph blocks of a table cell, recursing into wrappers but never duplicating nested tables."""
+    blocks: list[str] = []
+    for child in list(cell):
+        if child.tag == f"{WORD_NS}p":
+            txt = _extract_paragraph_text(child)
+            if txt:
+                blocks.append(txt)
+        elif child.tag == f"{WORD_NS}tbl":
+            blocks.extend(_table_blocks(child))
+        else:
+            blocks.extend(_cell_blocks(child))
+    return blocks
+
+
+def _row_cells(row: ET.Element) -> list[list[str]]:
+    cells: list[list[str]] = []
+    for child in list(row):
+        if child.tag == f"{WORD_NS}tc":
+            cells.append(_cell_blocks(child))
+        elif child.tag == f"{WORD_NS}tbl":
+            continue
+        elif child.tag != f"{WORD_NS}p":
+            cells.extend(_row_cells(child))
+    return cells
+
+
+def _table_rows(table: ET.Element) -> list[list[list[str]]]:
+    """Returns rows of cells, each cell as its own ordered paragraph blocks.
+
+    Only direct rows are read; nested tables are handled inside their own cell so
+    that ``.//w:tr``/``.//w:p`` descendant searches do not duplicate their text.
+    """
+    rows: list[list[list[str]]] = []
+    for child in list(table):
+        if child.tag == f"{WORD_NS}tr":
+            rows.append(_row_cells(child))
+        elif child.tag == f"{WORD_NS}tbl":
+            continue
+        elif child.tag != f"{WORD_NS}p":
+            rows.extend(_table_rows(child))
+    return rows
+
+
+def _table_blocks(table: ET.Element) -> list[str]:
+    rows = _table_rows(table)
+    if not rows:
+        return []
+
+    max_columns = max((len(row) for row in rows), default=0)
+    lines: list[str] = []
+    if max_columns == 2:
+        # Two-column Word/Canva templates (sidebar + main body): read the whole
+        # left column first, then the right column, keeping paragraph order.
+        for column in range(2):
+            for row in rows:
+                if column < len(row):
+                    lines.extend(row[column])
+    else:
+        # One-column tables and irregular grids keep their natural row order.
+        for row in rows:
+            for cell in row:
+                lines.extend(cell)
+    return lines
 
 
 def _extract_docx_xml_blocks(xml_bytes: bytes) -> list[str]:
@@ -143,18 +297,9 @@ def _extract_docx_xml_blocks(xml_bytes: bytes) -> list[str]:
             elif lines and lines[-1] != "":
                 lines.append("")
         elif child.tag == f"{WORD_NS}tbl":
-            for row in child.findall(f".//{WORD_NS}tr"):
-                cell_texts: list[str] = []
-                for cell in row.findall(f"./{WORD_NS}tc"):
-                    c_lines = [
-                        _extract_paragraph_text(p)
-                        for p in cell.findall(f".//{WORD_NS}p")
-                    ]
-                    c_joined = " ".join(x for x in c_lines if x).strip()
-                    if c_joined:
-                        cell_texts.append(c_joined)
-                if cell_texts:
-                    lines.append(" | ".join(dict.fromkeys(cell_texts)))
+            lines.extend(_table_blocks(child))
+        elif child.tag not in (f"{WORD_NS}sectPr",):
+            lines.extend(_cell_blocks(child))
     return lines
 
 
@@ -188,7 +333,7 @@ def extract_text_and_links_from_docx(raw_bytes: bytes) -> tuple[str, list[str]]:
             except ET.ParseError:
                 continue
 
-    return "\n".join(blocks).strip(), list(dict.fromkeys(uris))
+    return unicodedata.normalize("NFKC", "\n".join(blocks)).strip(), _dedupe_urls(uris)
 
 
 def _extract_contacts_from_raw_text(raw_text: str, embedded_urls: list[str]) -> dict[str, Any]:
@@ -196,12 +341,8 @@ def _extract_contacts_from_raw_text(raw_text: str, embedded_urls: list[str]) -> 
     phone_match = OUTBOUND_PHONE_RE.search(raw_text)
 
     text_urls = [_normalize_https_url(m.group(0)) for m in OUTBOUND_URL_RE.finditer(raw_text)]
-    all_urls: list[str] = []
-    seen_u: set[str] = set()
-    for candidate in [*embedded_urls, *(u for u in text_urls if u)]:
-        if candidate and candidate.lower() not in seen_u and "mailto:" not in candidate.lower():
-            seen_u.add(candidate.lower())
-            all_urls.append(candidate)
+    candidates = [u for u in [*embedded_urls, *(u for u in text_urls if u)] if u and "mailto:" not in u.lower()]
+    all_urls = _dedupe_urls(candidates)
 
     links = [
         ProfileLink(label=_infer_link_label(u), url=u)
@@ -303,7 +444,8 @@ INSTITUTION_ACRONYM_RE = re.compile(
     r"\b(?:"
     r"UNI[A-Z0-9]{2,}|UF[A-Z]{1,4}|UFR[A-Z]{1,3}|UE[A-Z]{2,4}|IF[A-Z]{2,4}|"
     r"ETE[A-Z0-9]*|ETEC|FATEC|CEFET|UPE|USP|PUC(?:-?[A-Z]{2})?|"
-    r"SENAI|SENAC|FIAP|FGV|IBMEC|INSPER|IME|ITA"
+    r"SENAI|SENAC|FIAP|FGV|IBMEC|INSPER|IME|ITA|"
+    r"FAFIRE|UNIBRA|FBV|FPS|UFPB|UFCG|UTFPR|UNIFESP"
     r")\b"
 )
 
@@ -311,28 +453,38 @@ INSTITUTION_WORD_RE = re.compile(
     r"\b(?:"
     r"universidade|centro\s+universitario|faculdade|instituto\s+federal|"
     r"instituto|escola\s+tecnica|colegio|fundacao|cesar\s+school|"
-    r"mackenzie|estacio|anhanguera|pitagoras|unopar|unicesumar|uninassau|unicap|uninter|etemac"
+    r"mackenzie|estacio|anhanguera|pitagoras|unopar|unicesumar|uninassau|unicap|uninter|etemac|"
+    r"fafire|unibra|fbv|fps|ufpb|ufcg|utfpr|unifesp"
     r")\b",
     re.IGNORECASE,
 )
 
-MONTH_TOKEN = r"(?:jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-zç]*"
+MONTH_TOKEN = (
+    r"(?:jan(?:eiro)?|fev(?:ereiro)?|mar(?:co|ço)?|abr(?:il)?|mai(?:o)?|"
+    r"jun(?:ho)?|jul(?:ho)?|ago(?:sto)?|set(?:embro)?|out(?:ubro)?|"
+    r"nov(?:embro)?|dez(?:embro)?|"
+    r"january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"sept|dec)"
+)
 
-PERIOD_LINE_RE = re.compile(
-    rf"(?:"
-    rf"\binicio\s*:|\bprevisao\s+de\s+conclusao|\bconcluido\s+em\b|\bconclusao\s*:|"
-    rf"\b(?:{MONTH_TOKEN}|\d{{2}})\s*/\s*(?:19|20)\d{{2}}\b|"
-    rf"\b(?:19|20)\d{{2}}\s*[-–—a]\s*(?:(?:19|20)\d{{2}}|atual|presente|andamento)\b|"
-    rf"^(?:em\s+andamento|cursando)$|"
-    rf"^(?:19|20)\d{{2}}$"
-    rf")",
+# One date point: `Março de 2023`, `Mar/2023`, `03/2022`, `Dezembro 2027` or a bare year.
+_DATE_POINT = rf"(?:(?:(?:{MONTH_TOKEN})(?:\s+de)?|\d{{1,2}})\s*[/.\s-]\s*)?(?:19|20)\d{{2}}"
+
+DATE_RANGE_RE = re.compile(
+    rf"(?:\bde\s+)?{_DATE_POINT}\s*(?:\s*[-–—]\s*|\s+a\s+|\s+até\s+)\s*"
+    rf"(?:{_DATE_POINT}|atual|presente|momento|o\s+momento|em\s+andamento|andamento)\b",
     re.IGNORECASE,
 )
 
-DATE_RANGE_RE = re.compile(
+PERIOD_LINE_RE = re.compile(
     rf"(?:"
-    rf"(?:{MONTH_TOKEN}|\d{{2}})\s*[/.\s]\s*(?:19|20)\d{{2}}\s*[-–—a]\s*(?:(?:{MONTH_TOKEN}|\d{{2}})\s*[/.\s]\s*(?:19|20)\d{{2}}|atual|presente|momento)|"
-    rf"\b(?:19|20)\d{{2}}\s*[-–—]\s*(?:(?:19|20)\d{{2}}|atual|presente|momento)\b"
+    rf"\bin[ií]cio\s*:|\bprevis[aã]o\s+de\s+conclus[aã]o|\bconclu[ií]do\s+em\b|"
+    rf"\bconclus[aã]o\s*:|\bcompleted?\s+in\b|"
+    rf"(?:{DATE_RANGE_RE.pattern})|"
+    rf"\b(?:{MONTH_TOKEN})(?:\s+de)?\s*[/.\s-]\s*(?:19|20)\d{{2}}\b|"
+    rf"\b(?:19|20)\d{{2}}\s*[-–—]\s*(?:(?:19|20)\d{{2}}|atual|presente|andamento)\b|"
+    rf"^(?:em\s+andamento|cursando)$|"
+    rf"^(?:19|20)\d{{2}}$"
     rf")",
     re.IGNORECASE,
 )
@@ -367,13 +519,31 @@ def _is_period_only_line(line: str) -> bool:
     return bool(PERIOD_LINE_RE.search(norm))
 
 
+def _split_preserving_date_ranges(line: str, pattern: str) -> list[str]:
+    """Splits an inline record without cutting through a date range such as
+    `Março de 2023 – Dezembro de 2027`."""
+    protected: list[str] = []
+
+    def _protect(match: re.Match[str]) -> str:
+        protected.append(match.group(0))
+        return f"\x00{len(protected) - 1}\x00"
+
+    temp = DATE_RANGE_RE.sub(_protect, line)
+    parts = [p.strip() for p in re.split(pattern, temp) if p.strip()]
+
+    def _restore(value: str) -> str:
+        return re.sub(r"\x00(\d+)\x00", lambda m: protected[int(m.group(1))], value)
+
+    return [_restore(part) for part in parts]
+
+
 def _split_inline_education_segments(line: str) -> dict[str, str] | None:
     """Handles single-line entries such as `Tecnólogo em ADS — UNINTER · Concluído em Dez/2025`
     without ever splitting degree status suffixes like `Graduação em Sistemas - Em andamento`."""
-    parts = [p.strip() for p in re.split(r"\s*(?:[—|]|·)\s*", line) if p.strip()]
+    parts = _split_preserving_date_ranges(line, r"\s*(?:[—|]|·)\s*")
     if len(parts) < 2:
         # Check hyphen split ONLY if one side is clearly an institution and the other is clearly a degree
-        hyphen_parts = [p.strip() for p in re.split(r"\s+[-–]\s+", line) if p.strip()]
+        hyphen_parts = _split_preserving_date_ranges(line, r"\s+[-–]\s+")
         if len(hyphen_parts) >= 2 and any(_is_institution_line(p) for p in hyphen_parts) and any(
             _is_degree_line(p) for p in hyphen_parts
         ):
@@ -433,7 +603,9 @@ def parse_education_blocks(lines_with_blanks: list[str]) -> list[EducationEntry]
     for raw_ln in lines_with_blanks:
         ln = raw_ln.strip().lstrip("•*-– ")
         if not ln:
-            if current["degree"] or current["institution"]:
+            # An anticipated institution waits for its degree instead of being
+            # flushed as a standalone (and later overwritten) entry.
+            if current["degree"] or (current["institution"] and current["period"]):
                 _flush()
             continue
 
@@ -445,19 +617,27 @@ def parse_education_blocks(lines_with_blanks: list[str]) -> list[EducationEntry]
             continue
 
         is_deg = _is_degree_line(ln)
-        is_inst = _is_institution_line(ln) and not is_deg
         is_per = _is_period_only_line(ln)
+        is_inst = _is_institution_line(ln) and not is_deg and not is_per
 
         if is_deg:
             if current["degree"]:
                 _flush()
             current["degree"] = ln
-        elif is_inst:
-            if current["institution"] and current["degree"]:
-                _flush()
-            current["institution"] = ln
         elif is_per:
             current["period"] = f"{current['period']} · {ln}".strip(" ·") if current["period"] else ln
+        elif is_inst:
+            if current["institution"] and current["degree"]:
+                # Consecutive entries without a blank line: close the previous one.
+                _flush()
+                current["institution"] = ln
+            elif current["institution"]:
+                # Anticipated institution must never be overwritten; keep both texts.
+                current["details"] = (
+                    f"{current['details']} · {ln}".strip(" ·") if current["details"] else ln
+                )
+            else:
+                current["institution"] = ln
         else:
             if not current["degree"]:
                 current["degree"] = ln
@@ -472,13 +652,143 @@ def parse_education_blocks(lines_with_blanks: list[str]) -> list[EducationEntry]
     return entries[:10]
 
 
+_STATE_NAME_TO_UF: dict[str, str] = {
+    "acre": "AC",
+    "alagoas": "AL",
+    "amapa": "AP",
+    "amazonas": "AM",
+    "bahia": "BA",
+    "ceara": "CE",
+    "distrito federal": "DF",
+    "espirito santo": "ES",
+    "goias": "GO",
+    "maranhao": "MA",
+    "mato grosso": "MT",
+    "mato grosso do sul": "MS",
+    "minas gerais": "MG",
+    "para": "PA",
+    "paraiba": "PB",
+    "parana": "PR",
+    "pernambuco": "PE",
+    "piaui": "PI",
+    "rio de janeiro": "RJ",
+    "rio grande do norte": "RN",
+    "rio grande do sul": "RS",
+    "rondonia": "RO",
+    "roraima": "RR",
+    "santa catarina": "SC",
+    "sao paulo": "SP",
+    "sergipe": "SE",
+    "tocantins": "TO",
+}
+
+_STATE_NAMES: tuple[str, ...] = (
+    "Acre",
+    "Alagoas",
+    "Amapá",
+    "Amazonas",
+    "Bahia",
+    "Ceará",
+    "Distrito Federal",
+    "Espírito Santo",
+    "Goiás",
+    "Maranhão",
+    "Mato Grosso",
+    "Mato Grosso do Sul",
+    "Minas Gerais",
+    "Pará",
+    "Paraíba",
+    "Paraná",
+    "Pernambuco",
+    "Piauí",
+    "Rio de Janeiro",
+    "Rio Grande do Norte",
+    "Rio Grande do Sul",
+    "Rondônia",
+    "Roraima",
+    "Santa Catarina",
+    "São Paulo",
+    "Sergipe",
+    "Tocantins",
+)
+
+_UF_CODES = tuple(sorted(set(_STATE_NAME_TO_UF.values())))
+_STATE_ALTERNATION = "|".join(
+    re.escape(name)
+    for name in sorted({*_STATE_NAMES, *_STATE_NAME_TO_UF}, key=len, reverse=True)
+)
+_UF_ALTERNATION = "|".join(_UF_CODES)
+
+_CITY_LABEL_RE = re.compile(
+    r"^(?:cidade|local(?:iza[cç][aã]o)?|endere[cç]o|resid[eê]ncia)\s*:\s*",
+    re.IGNORECASE,
+)
+_CITY_CONTEXT_PREFIX_RE = re.compile(
+    r"^(?:natural\s+de|residente\s+em|residindo\s+em|localizad[oa]\s+em|mora\s+em|based\s+in)\s+",
+    re.IGNORECASE,
+)
+_CITY_STATE_FIELD_RE = re.compile(
+    rf"^(?P<city>.+?)\s*(?:[-–—,/]|\s+)\s*(?P<state>{_UF_ALTERNATION}|{_STATE_ALTERNATION})\s*$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_state_token(token: str) -> str:
+    cleaned = token.strip(" .,;:-–—")
+    upper = cleaned.upper()
+    if upper in _UF_CODES:
+        return upper
+    return _STATE_NAME_TO_UF.get(_strip_accents(cleaned).casefold(), "")
+
+
+def _clean_city_name(value: str) -> str:
+    city = _CITY_LABEL_RE.sub("", value.strip())
+    city = _CITY_CONTEXT_PREFIX_RE.sub("", city)
+    city = city.strip(" .,;:|/-–—·")
+    city = re.sub(r"\s+", " ", city)
+    if not (2 <= len(city) <= 60):
+        return ""
+    if any(ch.isdigit() for ch in city) or "@" in city:
+        return ""
+    lowered = _strip_accents(city).casefold()
+    if "http" in lowered or "www." in lowered or lowered in {"brasil", "remoto"}:
+        return ""
+    if not re.fullmatch(r"[A-Za-zÀ-ÿ' .-]+", city):
+        return ""
+    return city
+
+
+def _city_state_from_field(field: str) -> tuple[str, str] | None:
+    cleaned_field = re.sub(r"[\s,–—-]+brasil\s*$", "", field.strip(), flags=re.IGNORECASE)
+    match = _CITY_STATE_FIELD_RE.match(cleaned_field)
+    if not match:
+        return None
+    city = _clean_city_name(match.group("city"))
+    uf = _normalize_state_token(match.group("state"))
+    if city and uf:
+        return city, uf
+    return None
+
+
+def _extract_city_state(text: str) -> tuple[str, str]:
+    """Finds city/state across the whole preamble, including mixed contact lines."""
+    for line in text.splitlines():
+        # Contact tokens are separators for location purposes; they must never
+        # become part of the city or leak into the summary.
+        sanitized = OUTBOUND_EMAIL_RE.sub(" | ", line)
+        sanitized = OUTBOUND_PHONE_RE.sub(" | ", sanitized)
+        sanitized = OUTBOUND_URL_RE.sub(" | ", sanitized)
+        for field in re.split(r"[|;•·]", sanitized):
+            parsed = _city_state_from_field(field)
+            if parsed:
+                return parsed
+    return "", ""
+
+
 def _extract_location_token(text: str) -> str:
-    loc_m = re.search(
-        r"\b([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{2,30})\s*[,/-]\s*([A-Z]{2})\b",
-        text,
-    )
-    if loc_m:
-        return f"{loc_m.group(1).strip()}, {loc_m.group(2)}"
+    parsed = _city_state_from_field(text)
+    if parsed:
+        return f"{parsed[0]}, {parsed[1]}"
     if re.search(r"\bremoto\b", _strip_accents(text)):
         return "Remoto"
     return ""
@@ -489,13 +799,126 @@ def _is_experience_meta_line(line: str) -> bool:
     return bool(DATE_RANGE_RE.search(norm) or PERIOD_LINE_RE.search(norm) or CONTRACT_KEYWORDS_RE.search(norm))
 
 
+_EXPERIENCE_LABEL_RE = re.compile(
+    r"^(?:local(?:iza[cç][aã]o)?|cidade|contrato|regime|modalidade|modelo|jornada|"
+    r"hor[aá]rio|sal[aá]rio|benef[ií]cios|atividades|responsabilidades|projetos)\s*:",
+    re.IGNORECASE,
+)
+
+
 def _looks_like_role_title(line: str) -> bool:
     if len(line) > 95 or line.endswith("."):
+        return False
+    if not line or not line[0].isupper():
+        return False
+    if ":" in line or "@" in line or "http" in line.casefold():
+        return False
+    if _EXPERIENCE_LABEL_RE.search(line):
         return False
     norm = _strip_accents(line)
     if ACTION_SENTENCE_START_RE.search(norm):
         return False
+    if _is_institution_line(line):
+        return False
     return True
+
+
+def _looks_like_company_line(line: str) -> bool:
+    if not line or not line[0].isupper():
+        return False
+    if len(line) > 110 or line.endswith("."):
+        return False
+    if ":" in line or line.startswith(("•", "*", "- ", "– ")):
+        return False
+    norm = _strip_accents(line)
+    if ACTION_SENTENCE_START_RE.search(norm):
+        return False
+    if _is_experience_meta_line(line):
+        return False
+    return True
+
+
+def _split_company_period(line: str) -> tuple[str, str]:
+    """Splits `Empresa Beta · Mar/2024 – Atual` without cutting the date range."""
+    parts = _split_preserving_date_ranges(
+        line, r"\s*(?:[—|]|·)\s*|\s+[-–]\s+"
+    )
+    company = ""
+    period_parts: list[str] = []
+    for part in parts:
+        if _is_experience_meta_line(part):
+            period_parts.append(part)
+        elif not company and _looks_like_company_line(part):
+            company = part
+        else:
+            period_parts.append(part)
+    return company, " · ".join(period_parts)
+
+
+def _block_has_experience_header(lines: list[str]) -> bool:
+    stripped = [ln.lstrip("•*-– ").strip() for ln in lines if ln.strip()]
+    if not stripped:
+        return False
+    first = stripped[0]
+    if DATE_RANGE_RE.search(_strip_accents(first)) and any(
+        sep in first for sep in ("—", "–", "|", "·", " - ")
+    ):
+        return True
+    return any(_has_temporal_evidence(cand) for cand in stripped[1:4])
+
+
+def _has_temporal_evidence(line: str) -> bool:
+    norm = _strip_accents(line)
+    return bool(DATE_RANGE_RE.search(norm) or PERIOD_LINE_RE.search(norm))
+
+
+def _has_inline_experience_header(line: str) -> bool:
+    if len(line) > 140 or not any(sep in line for sep in ("—", "–", "|", "·", " - ")):
+        return False
+    if not DATE_RANGE_RE.search(_strip_accents(line)):
+        return False
+    first_seg = re.split(r"\s*(?:[—|]|·)\s*", line, maxsplit=1)[0].strip()
+    return bool(first_seg) and _looks_like_role_title(first_seg) and not _is_experience_meta_line(first_seg)
+
+
+def _starts_experience_header(lines: list[str], index: int) -> bool:
+    """Detects a coherent `Cargo → Empresa → Período` header, with or without a blank line.
+
+    Temporal evidence is mandatory, so activity bullets, short descriptions and the
+    current job's metadata never open a phantom experience.
+    """
+    line = lines[index].lstrip("•*-– ").strip()
+    if not line:
+        return False
+    if _has_inline_experience_header(line):
+        return True
+    if _is_experience_meta_line(line) or _extract_location_token(line):
+        return False
+    if not _looks_like_role_title(line):
+        return False
+
+    upcoming: list[str] = []
+    for j in range(index + 1, len(lines)):
+        candidate = lines[j].lstrip("•*-– ").strip()
+        if not candidate:
+            continue
+        upcoming.append(candidate)
+        if len(upcoming) >= 3:
+            break
+    if not upcoming:
+        return False
+
+    meta_index = next(
+        (pos for pos, cand in enumerate(upcoming) if _has_temporal_evidence(cand) and len(cand) <= 110),
+        None,
+    )
+    if meta_index is None:
+        return False
+    if meta_index == 0:
+        # Two-line header where company and period share the second line.
+        company, _period = _split_company_period(upcoming[0])
+        return bool(company)
+    return _looks_like_company_line(upcoming[0])
 
 
 def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntry]:
@@ -506,7 +929,6 @@ def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntr
 
     raw_blocks: list[list[str]] = []
     cur_lines: list[str] = []
-    cur_has_body = False
 
     clean_seq = [ln.strip() for ln in lines_with_blanks]
     total = len(clean_seq)
@@ -514,36 +936,22 @@ def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntr
     for idx, raw_ln in enumerate(clean_seq):
         if not raw_ln:
             continue
-        was_preceded_by_blank = idx > 0 and clean_seq[idx - 1] == ""
         was_bullet = raw_ln.startswith(("•", "*", "- ", "– "))
         ln = raw_ln.lstrip("•*-– ").strip()
         if not ln:
             continue
 
-        # Look ahead 1-2 non-empty lines to see if a new Role + Company/Date header is starting
-        upcoming: list[str] = []
-        for j in range(idx + 1, min(total, idx + 5)):
-            if clean_seq[j]:
-                upcoming.append(clean_seq[j].lstrip("•*-– ").strip())
-            if len(upcoming) >= 2:
-                break
-
         starts_new_exp = False
-        if cur_lines and cur_has_body and not was_bullet:
-            # Inline combined header with date range (`Cargo — Empresa · Mar/2024 – Set/2024`)
-            if DATE_RANGE_RE.search(_strip_accents(ln)) and len(ln) <= 140 and ("—" in ln or "–" in ln or "|" in ln or "·" in ln):
-                starts_new_exp = True
-            elif was_preceded_by_blank and _looks_like_role_title(ln) and any(_is_experience_meta_line(u) for u in upcoming):
-                starts_new_exp = True
+        if cur_lines and not was_bullet and _block_has_experience_header(cur_lines):
+            # Works with or without blank lines and even when the current job has
+            # no description at all: structure + temporal evidence are required.
+            starts_new_exp = _starts_experience_header(clean_seq, idx)
 
         if starts_new_exp:
             raw_blocks.append(cur_lines)
             cur_lines = [raw_ln]
-            cur_has_body = False
         else:
             cur_lines.append(raw_ln)
-            if len(cur_lines) >= 3 and (was_bullet or len(ln) > 85 or ACTION_SENTENCE_START_RE.search(_strip_accents(ln))):
-                cur_has_body = True
 
     if cur_lines:
         raw_blocks.append(cur_lines)
@@ -562,17 +970,23 @@ def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntr
         body_start = 1
 
         # Case 1: Combined single header line (`Cargo — Empresa · Período · Local`)
-        header_segs = [s.strip() for s in re.split(r"\s*(?:[—|]|·)\s*", first) if s.strip()]
-        if len(header_segs) == 1 and re.search(r"\s+[-–]\s+", first) and not DATE_RANGE_RE.search(_strip_accents(first)):
-            header_segs = [s.strip() for s in re.split(r"\s+[-–]\s+", first, maxsplit=2) if s.strip()]
+        header_segs = _split_preserving_date_ranges(first, r"\s*(?:[—|]|·)\s*")
+        if len(header_segs) == 1 and DATE_RANGE_RE.search(_strip_accents(first)):
+            # `Cargo - Empresa - Mar/2024 - Set/2024`: split hyphens without
+            # cutting the date range itself.
+            hyphen_segs = _split_preserving_date_ranges(first, r"\s+[-–]\s+")
+            if len(hyphen_segs) >= 2:
+                header_segs = hyphen_segs
 
         if len(header_segs) >= 2:
             role = header_segs[0]
             per_parts: list[str] = []
             for seg in header_segs[1:]:
                 loc_hit = _extract_location_token(seg)
-                if loc_hit and seg.strip() == loc_hit:
-                    location = loc_hit
+                if loc_hit:
+                    location = location or loc_hit
+                    if _is_experience_meta_line(seg):
+                        per_parts.append(seg)
                 elif _is_experience_meta_line(seg):
                     per_parts.append(seg)
                 elif not company:
@@ -596,11 +1010,18 @@ def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntr
                 cand = stripped[cursor]
                 if len(cand) > 100 or cand.endswith(".") or ACTION_SENTENCE_START_RE.search(_strip_accents(cand)):
                     break
-                if _is_experience_meta_line(cand):
-                    loc_hit = _extract_location_token(cand)
+                loc_hit = _extract_location_token(cand)
+                if loc_hit and not _is_experience_meta_line(cand):
+                    location = location or loc_hit
+                    cursor += 1
+                elif _is_experience_meta_line(cand):
                     if loc_hit and not location:
                         location = loc_hit
-                    period = f"{period} · {cand}".strip(" ·") if period else cand
+                    company_from_meta, period_from_meta = _split_company_period(cand)
+                    if company_from_meta and not company:
+                        company = company_from_meta
+                    period_value = period_from_meta or cand
+                    period = f"{period} · {period_value}".strip(" ·") if period else period_value
                     cursor += 1
                 elif not company and not block[cursor].startswith(("•", "*")):
                     company = cand
@@ -628,7 +1049,7 @@ def parse_experience_blocks(lines_with_blanks: list[str]) -> list[ExperienceEntr
 
 WORKLOAD_TOKEN_RE = re.compile(r"\b\d+\s*h(?:oras?)?\b", re.IGNORECASE)
 COURSE_DATE_TOKEN_RE = re.compile(
-    rf"\b(?:conclu[ií]do\s+em\s+)?(?:(?:{MONTH_TOKEN}|\d{{2}})\s*[/.-]\s*)?(?:19|20)\d{{2}}\b",
+    rf"\b(?:conclu[ií]do\s+em\s+)?{_DATE_POINT}\b",
     re.IGNORECASE,
 )
 
@@ -660,6 +1081,92 @@ def normalize_course_fields(
         completion_date=cdate[:80],
         description=desc[:1000],
     )
+
+
+_COURSE_DESCRIPTION_WORDS = {
+    "formacao", "inteligencia", "artificial", "generativa", "generativo", "automacao",
+    "fluxos", "validacao", "dados", "completo", "completa", "intensivo", "intensiva",
+    "pratico", "pratica", "online", "remoto", "remota", "avancado", "avancada",
+    "basico", "basica", "iniciante", "intermediario", "intermediaria", "conteudo",
+    "modulo", "aulas", "projetos", "aplicada", "aplicado",
+}
+
+
+def _is_course_institution_candidate(text: str) -> bool:
+    cleaned = text.strip(" ·•-–—,;")
+    if not cleaned:
+        return False
+    if _is_institution_line(cleaned):
+        return True
+    if not (2 <= len(cleaned) <= 70) or cleaned.endswith((".", "!", "?")):
+        return False
+    if not cleaned[0].isupper() or ACTION_SENTENCE_START_RE.search(_strip_accents(cleaned)):
+        return False
+    words = cleaned.split()
+    if len(words) > 4:
+        return False
+    normalized_words = {_strip_accents(word).casefold().strip("(),.") for word in words}
+    if normalized_words & _COURSE_DESCRIPTION_WORDS:
+        return False
+    return True
+
+
+def _looks_like_course_title(line: str) -> bool:
+    cleaned = line.strip()
+    if not cleaned or len(cleaned) > 100 or cleaned.endswith((".", "!", "?")):
+        return False
+    if not cleaned[0].isupper() or ACTION_SENTENCE_START_RE.search(_strip_accents(cleaned)):
+        return False
+    words = cleaned.split()
+    if len(words) > 10:
+        return False
+    if len(words) == 1:
+        return True
+    capitalized = sum(1 for word in words if word[:1].isupper())
+    return capitalized >= max(2, (len(words) + 1) // 2)
+
+
+def _is_course_continuation(line: str, blocks: list[list[str]]) -> bool:
+    if not blocks or not line.strip():
+        return False
+    cleaned = line.strip()
+    has_new_course_structure = bool(
+        (WORKLOAD_TOKEN_RE.search(cleaned) or COURSE_DATE_TOKEN_RE.search(cleaned))
+        and any(sep in cleaned for sep in ("—", "|"))
+    ) or _is_institution_line(cleaned)
+
+    if (cleaned.endswith((".", "!", "?")) or len(cleaned) > 90) and not has_new_course_structure:
+        return True
+    if _looks_like_course_title(cleaned):
+        return False
+    if cleaned[0].islower() or ACTION_SENTENCE_START_RE.search(_strip_accents(cleaned)):
+        return True
+    previous = blocks[-1][-1].strip()
+    if previous.endswith((":", ",", ";")):
+        return True
+    if WORKLOAD_TOKEN_RE.search(cleaned) or COURSE_DATE_TOKEN_RE.search(cleaned):
+        leftover = WORKLOAD_TOKEN_RE.sub("", cleaned)
+        leftover = COURSE_DATE_TOKEN_RE.sub("", leftover).strip(" ·•-–—,;")
+        # Pure metadata (`40 horas · Out/2026`) extends the previous course;
+        # a title carrying its own metadata starts a new one.
+        return not leftover or len(leftover) <= 2
+    if _is_course_institution_candidate(cleaned):
+        return True
+    words = cleaned.split()
+    capitalized = sum(1 for word in words if word[:1].isupper())
+    if len(words) >= 3 and capitalized == 1:
+        normalized_words = {_strip_accents(word).casefold().strip("(),.") for word in words}
+        strong_cues = normalized_words & (
+            _COURSE_DESCRIPTION_WORDS
+            - {"formacao", "projetos", "dados", "online", "remoto", "pratico", "avancado", "basico"}
+        )
+        if strong_cues:
+            return True
+        if len(cleaned) <= 45 and len(words) <= 5 and not blocks[-1][1:]:
+            # Short noun phrase such as `Gestão de projetos`: a distinct course, not prose.
+            return False
+        return True
+    return len(words) >= 6
 
 
 def _parse_single_course_chunk(lines: list[str]) -> CourseEntry | None:
@@ -695,12 +1202,18 @@ def _parse_single_course_chunk(lines: list[str]) -> CourseEntry | None:
         if s.strip(" ·•-–—,;")
     ]
     title = segs[0] if segs else head.strip(" ·•-–—,;")
-    institution = segs[1] if len(segs) >= 2 else ""
+    institution = ""
 
     # Check second line if it holds institution / workload / date
     remaining_desc: list[str] = []
     if inline_desc:
         remaining_desc.append(inline_desc)
+
+    for seg in segs[1:]:
+        if not institution and _is_course_institution_candidate(seg):
+            institution = seg
+        else:
+            remaining_desc.append(seg)
 
     for sub in extra_desc_lines:
         sub_work = sub
@@ -715,9 +1228,11 @@ def _parse_single_course_chunk(lines: list[str]) -> CourseEntry | None:
                 completion_date = re.sub(r"^conclu[ií]do\s+em\s+", "", dt2.group(0), flags=re.IGNORECASE).strip()
                 sub_work = (sub_work[: dt2.start()] + " " + sub_work[dt2.end() :]).strip()
             leftover_inst = sub_work.strip(" ·•-–—,;")
-            if leftover_inst and not institution and len(leftover_inst) <= 70:
+            if leftover_inst and not institution and _is_course_institution_candidate(leftover_inst):
                 institution = leftover_inst
-        elif not institution and len(sub) <= 65 and not sub.endswith("."):
+            elif leftover_inst:
+                remaining_desc.append(leftover_inst)
+        elif not institution and _is_course_institution_candidate(sub):
             institution = sub
         else:
             remaining_desc.append(sub)
@@ -758,14 +1273,7 @@ def parse_course_blocks(lines_with_blanks: list[str]) -> list[CourseEntry]:
             s = raw_ln.strip()
             if not s:
                 continue
-            is_continuation = (
-                blocks
-                and not raw_ln.lstrip().startswith(("•", "*", "- "))
-                and (WORKLOAD_TOKEN_RE.search(s) or COURSE_DATE_TOKEN_RE.search(s))
-                and len(s) <= 75
-                and not ("—" in s or " - " in s)
-            )
-            if is_continuation:
+            if blocks and _is_course_continuation(s, blocks):
                 blocks[-1].append(raw_ln)
             else:
                 blocks.append([raw_ln])
@@ -835,7 +1343,42 @@ def parse_project_blocks(lines_with_blanks: list[str]) -> list[ProjectEntry]:
     return projects
 
 
+def _split_skills_outside_parentheses(text: str) -> list[str]:
+    """Splits skill lists only at top level, keeping nested groups such as
+    `Java (POO, Collections)` intact."""
+    tokens: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in "([{":
+            depth += 1
+            buffer.append(char)
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+            buffer.append(char)
+        elif depth == 0 and char in ",;•·|":
+            tokens.append("".join(buffer))
+            buffer = []
+        elif depth == 0 and text.startswith(" e ", index) and index + 3 < len(text) and text[index + 3].isupper():
+            tokens.append("".join(buffer))
+            buffer = []
+            index += 3
+            continue
+        else:
+            buffer.append(char)
+        index += 1
+    tokens.append("".join(buffer))
+    return [re.sub(r"\s+", " ", token).strip(" .") for token in tokens if token.strip(" .")]
+
+
+def _line_has_contact(line: str) -> bool:
+    return bool("@" in line or OUTBOUND_PHONE_RE.search(line) or OUTBOUND_URL_RE.search(line))
+
+
 def heuristic_parse_resume_text(raw_text: str, embedded_urls: list[str]) -> MasterProfile:
+    raw_text = unicodedata.normalize("NFKC", raw_text)
     contacts = _extract_contacts_from_raw_text(raw_text, embedded_urls)
     raw_lines = [ln.strip() for ln in raw_text.splitlines()]
     non_empty_lines = [ln for ln in raw_lines if ln]
@@ -888,29 +1431,18 @@ def heuristic_parse_resume_text(raw_text: str, embedded_urls: list[str]) -> Mast
             continue
 
         if current_bucket is None:
-            if (
-                "@" not in ln
-                and not OUTBOUND_PHONE_RE.search(ln)
-                and "linkedin.com" not in ln.lower()
-                and "github.com" not in ln.lower()
-            ):
-                preamble_lines.append(ln)
+            # Location may live on a mixed contact line, so the full preamble is
+            # collected here and filtered separately before building the summary.
+            preamble_lines.append(ln)
         else:
             buckets[current_bucket].append(ln)
 
-    city = ""
-    state = ""
-    for pln in preamble_lines[:4]:
-        loc_m = re.search(r"([A-Za-zÀ-ÿ\s]{3,35})\s*[-/,·]\s*([A-Z]{2})\b", pln)
-        if loc_m:
-            city = loc_m.group(1).strip(" ,·-")
-            state = loc_m.group(2).strip()
-            break
+    city, state = _extract_city_state("\n".join(preamble_lines))
 
     summary_lines = [s.lstrip("•*-– ").strip() for s in buckets["summary"] if s.strip()]
     summary_text = "\n".join(summary_lines).strip()
     if not summary_text and len(preamble_lines) >= 1:
-        long_preamble = [p for p in preamble_lines if len(p) > 65]
+        long_preamble = [p for p in preamble_lines if len(p) > 65 and not _line_has_contact(p)]
         summary_text = "\n".join(long_preamble).strip()
 
     experiences = parse_experience_blocks(buckets["experience"])
@@ -928,7 +1460,7 @@ def heuristic_parse_resume_text(raw_text: str, embedded_urls: list[str]) -> Mast
             if ":" in cleaned_sk and len(cleaned_sk.split(":", 1)[0]) < 35
             else cleaned_sk
         )
-        for token in re.split(r"[,;•·|]|\s+e\s+(?=[A-Z])", cleaned_sk):
+        for token in _split_skills_outside_parentheses(cleaned_sk):
             tag = token.strip(" .")
             if 1 < len(tag) <= 80:
                 skills.append(tag)
@@ -999,7 +1531,8 @@ async def import_profile_from_uploaded_file(
     else:
         raise ProfileImportError("Formato não suportado. Envie um arquivo .pdf ou .docx.")
 
-    if len(raw_text.strip()) < 20:
+    raw_text = unicodedata.normalize("NFKC", raw_text).strip()
+    if len(raw_text) < 20:
         raise ProfileImportError(
             "Não foi possível extrair texto legível do documento (verifique se o PDF não é apenas imagem escaneada)."
         )

@@ -228,6 +228,33 @@ class TestDeterministicTriageEngine:
         assert res.service_tier == 3
         assert res.automation_capability == "necessita_intervencao_manual"
 
+    def test_non_tech_roles_are_discarded_only_for_automatic_sources(self) -> None:
+        engine = _load_triage_engine()
+        automatic = RawJobInput(
+            source="rss_local:demo",
+            source_id="adm-1",
+            title="Assistente Administrativo",
+            company="Escritório Horizonte",
+            url="https://jobs.example.com/vagas/adm-1",
+            location="Belo Horizonte, MG",
+            description="Vaga CLT, 08h às 17h. Rotinas administrativas e atendimento.",
+        )
+        auto_res = engine.evaluate(automatic)
+        assert auto_res.area_id is None
+        assert auto_res.classification == "descartada"
+        assert any(
+            "fora do foco técnico" in msg for msg in auto_res.hard_incompatibilities
+        )
+
+        manual = automatic.model_copy(
+            update={"source": "manual:assisted_import", "source_id": "manual-adm-1"}
+        )
+        manual_res = engine.evaluate(manual)
+        assert not any(
+            "fora do foco técnico" in msg for msg in manual_res.hard_incompatibilities
+        )
+        assert manual_res.classification != "descartada"
+
 
 class TestSafeAsyncHttpClientSecurity:
     @pytest.mark.anyio
@@ -537,7 +564,7 @@ class TestDiscoveryApiConnectorsDeduplicationAndScheduler:
         sitemap_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
         <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
           <url>
-            <loc>https://portal.example.com/vaga/assistente-administrativo-belo-horizonte-555</loc>
+            <loc>https://portal.example.com/vaga/analista-suporte-belo-horizonte-555</loc>
             <lastmod>{recent_date}</lastmod>
           </url>
         </urlset>
@@ -545,11 +572,11 @@ class TestDiscoveryApiConnectorsDeduplicationAndScheduler:
 
         sitemap_job_html = """
         <html><body>
-          <h1 class="job-title">Assistente Administrativo</h1>
-          <div class="job-company-name">Escritório Horizonte</div>
+          <h1 class="job-title">Analista de Suporte de TI</h1>
+          <div class="job-company-name">Horizonte Sistemas</div>
           <div class="job-location">Belo Horizonte - MG</div>
           <div class="job-description">
-            Vaga CLT, 08h às 17h. Requisitos: Excel, organização de planilhas e atendimento ao cliente.
+            Vaga CLT, 08h às 17h. Requisitos: Windows, Active Directory, Help Desk e redes.
           </div>
         </body></html>
         """
@@ -571,7 +598,7 @@ class TestDiscoveryApiConnectorsDeduplicationAndScheduler:
                 return httpx.Response(200, text="User-agent: *\nAllow: /\n")
             if url == "https://portal.example.com/sitemap.xml":
                 return httpx.Response(200, text=sitemap_xml)
-            if url == "https://portal.example.com/vaga/assistente-administrativo-belo-horizonte-555":
+            if url == "https://portal.example.com/vaga/analista-suporte-belo-horizonte-555":
                 return httpx.Response(200, text=sitemap_job_html)
             if url.startswith("https://api.lever.co/v0/postings/examplelever"):
                 return httpx.Response(
@@ -674,9 +701,11 @@ class TestDiscoveryApiConnectorsDeduplicationAndScheduler:
 
             jobs = (await client.get("/api/jobs")).json()["items"]
             areas = {j["title"]: j["area_id"] for j in jobs}
-            assert areas["Assistente Administrativo"] == "administrativo"
+            assert areas["Analista de Suporte de TI"] == "suporte"
             assert areas["Estágio em Análise de Dados e BI"] == "dados"
             assert areas["Auxiliar de Suporte de TI"] == "suporte"
+            assert all(j["source_label"] for j in jobs)
+            assert "Via " not in jobs[0]["source_label"]
 
     @pytest.mark.anyio
     async def test_deduplicates_against_preexisting_migrated_sqlite_fingerprints(

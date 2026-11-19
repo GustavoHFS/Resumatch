@@ -159,12 +159,12 @@ class WebSearchJobConnector:
         if self.config.company_fallback:
             return [
                 f"{self.config.company_fallback} TI suporte desenvolvedor dados",
-                f"{self.config.company_fallback} administrativo tecnologia",
+                f"{self.config.company_fallback} tecnologia sistemas",
             ]
         return [
             "suporte ti help desk redes",
             "desenvolvedor junior sistemas dados",
-            "assistente administrativo tecnologia",
+            "analista de dados junior",
         ]
 
     def _parse_talent_meta_cards(

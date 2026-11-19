@@ -82,6 +82,37 @@ def contains_term(haystack: str, needle: str) -> bool:
     return re.search(pattern, normalize_text(haystack)) is not None
 
 
+# Administrative, logistics, retail and facilities roles are no longer part of the
+# active search strategy. They are discarded only when captured automatically;
+# jobs pasted manually by the user are always preserved and can be adapted.
+NON_TECH_ROLE_TERMS: tuple[str, ...] = (
+    "auxiliar administrativo",
+    "assistente administrativo",
+    "administrativo",
+    "recepcionista",
+    "estoque",
+    "logistica",
+    "facilities",
+    "comercial",
+)
+
+MANUAL_SOURCE_PREFIX = "manual:"
+LEGACY_MANUAL_SOURCES = frozenset({"descoberta_assistida"})
+
+
+def is_manual_source(source: str | None) -> bool:
+    value = (source or "").strip().lower()
+    return value.startswith(MANUAL_SOURCE_PREFIX) or value in LEGACY_MANUAL_SOURCES
+
+
+def is_non_tech_role(title: str | None) -> bool:
+    """True when a job title clearly belongs to administrative/logistics/commercial areas."""
+    norm_title = normalize_text(title or "").strip()
+    if not norm_title:
+        return False
+    return any(contains_term(norm_title, term) for term in NON_TECH_ROLE_TERMS)
+
+
 def canonicalize_url(url: str) -> str:
     if not url:
         return ""
@@ -737,6 +768,12 @@ class DeterministicTriageEngine:
         technical_notes: list[str] = []
         strategic_exclusions: list[str] = []
 
+        force_non_tech = not is_manual_source(job.source) and is_non_tech_role(job.title)
+        if force_non_tech:
+            hard_incompatibilities.append(
+                "Área administrativa/comercial/logística fora do foco técnico"
+            )
+
         # 1. Blocked companies & recruiting-on-behalf check
         job_company_norm = _normalize_company_name(job.company)
         for entity in self.blocked.companies:
@@ -1001,11 +1038,16 @@ class DeterministicTriageEngine:
             if desc_hits and cat_area in area_scores:
                 area_scores[cat_area] += min(15, 3 * desc_hits)
 
-        best_score = max(area_scores.values()) if area_scores else 0
-        winners = [a for a, sc in area_scores.items() if sc == best_score and sc > 0]
-        selected_area = winners[0] if len(winners) == 1 else (winners[0] if winners else None)
-        if not winners:
-            operational_omissions.append("Área temática identificada de forma geral")
+        if force_non_tech:
+            area_scores = {}
+            winners = []
+            selected_area = None
+        else:
+            best_score = max(area_scores.values()) if area_scores else 0
+            winners = [a for a, sc in area_scores.items() if sc == best_score and sc > 0]
+            selected_area = winners[0] if len(winners) == 1 else (winners[0] if winners else None)
+            if not winners:
+                operational_omissions.append("Área temática identificada de forma geral")
 
         is_senior = any(
             contains_term(job.title, sig)

@@ -93,6 +93,7 @@ class RoleCatalog(StrictModel):
 
 class SearchCriteria(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
+    include_remote: bool = True
     geography: GeographyPolicy
     schedule: SchedulePolicy = Field(default_factory=SchedulePolicy)
     contracts: ContractPolicy = Field(default_factory=ContractPolicy)

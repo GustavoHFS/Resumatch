@@ -31,6 +31,7 @@ CSHARP_SOURCE = r"""
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -220,32 +221,47 @@ namespace ResumatchLauncher
             return 8000;
         }
 
-        private static bool IsWindowClosedViaHeartbeat(int port, ref int consecutiveZeroChecks)
+        private const double InactivityTimeoutSeconds = 900.0;
+
+        private static bool ShouldShutdown(int port, ref int closedSignalChecks)
         {
             string compact = HttpGetJsonCompact("http://127.0.0.1:" + port + "/api/lifecycle/status", 700);
             if (compact == null) return false;
 
-            bool everConnected = compact.Contains("\"ever_connected\":true");
-            bool zeroActive = compact.Contains("\"active_clients\":0");
-            bool closedSignal = compact.Contains("\"closed_signal\":true");
-
-            if (everConnected && zeroActive)
+            // A real tab close fires navigator.sendBeacon('/api/lifecycle/close').
+            // Keep a short reload grace window so a page refresh never kills the server.
+            if (compact.Contains("\"closed_signal\":true"))
             {
-                consecutiveZeroChecks++;
-                // Allow ~3s reload grace window (6 checks * 500ms if closedSignal, or 24 checks = 12s idle timeout)
-                int threshold = closedSignal ? 6 : 24;
-                return consecutiveZeroChecks >= threshold;
+                closedSignalChecks++;
+                return closedSignalChecks >= 4;
             }
+            closedSignalChecks = 0;
 
-            consecutiveZeroChecks = 0;
+            // Never shut down on short ping delays (minimized window, sleep, network blip).
+            // Only a full 15-minute silence is treated as a real close fallback.
+            Match m = Regex.Match(compact, "\"seconds_since_last_seen\":([0-9.]+)");
+            if (m.Success)
+            {
+                double seconds;
+                if (double.TryParse(
+                    m.Groups[1].Value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out seconds
+                ) && seconds >= InactivityTimeoutSeconds)
+                {
+                    return true;
+                }
+            }
             return false;
         }
 
         private static void MonitorViaHeartbeatUntilClosed(int port, Process backendProc)
         {
-            // Wait up to 25s for initial tab ping, then keep server alive until tab closes
+            // Wait up to 60s for the initial tab ping, then keep the server alive through
+            // reloads/background tabs. Shutdown happens only via close beacon or 15 min silence.
             Stopwatch waitConnect = Stopwatch.StartNew();
-            int consecutiveZero = 0;
+            int closedSignalChecks = 0;
             while (true)
             {
                 if (backendProc != null && backendProc.HasExited) break;
@@ -256,14 +272,14 @@ namespace ResumatchLauncher
                     bool everConnected = compact.Contains("\"ever_connected\":true");
                     if (!everConnected)
                     {
-                        if (waitConnect.ElapsedMilliseconds > 25000) break;
+                        if (waitConnect.ElapsedMilliseconds > 60000) break;
                     }
-                    else if (IsWindowClosedViaHeartbeat(port, ref consecutiveZero))
+                    else if (ShouldShutdown(port, ref closedSignalChecks))
                     {
                         break;
                     }
                 }
-                Thread.Sleep(500);
+                Thread.Sleep(1000);
             }
         }
 
@@ -389,25 +405,25 @@ namespace ResumatchLauncher
                         UseShellExecute = false
                     };
 
-                    Stopwatch uiLifetime = Stopwatch.StartNew();
                     using (Process uiProc = Process.Start(uiPsi))
                     {
                         if (uiProc != null)
                         {
-                            int consecutiveZero = 0;
+                            int closedSignalChecks = 0;
                             while (!uiProc.HasExited)
                             {
                                 if (uiProc.WaitForExit(500)) break;
-                                if (IsWindowClosedViaHeartbeat(port, ref consecutiveZero)) break;
-                            }
-
-                            // Edge Startup Boost guard: if browser process exited in < 3.5s (IPC handoff),
-                            // keep backend alive and monitor tab heartbeat until the user actually closes the window!
-                            if (uiLifetime.ElapsedMilliseconds < 3500 && startedBackendHere)
-                            {
-                                MonitorViaHeartbeatUntilClosed(port, backendProc);
+                                if (ShouldShutdown(port, ref closedSignalChecks)) break;
                             }
                         }
+                    }
+
+                    // Edge/Chrome Startup Boost may hand the window to an existing background
+                    // process and exit this handle immediately. Never kill on that handoff:
+                    // monitor the tab heartbeat and wait for a real close beacon or 15 min silence.
+                    if (startedBackendHere)
+                    {
+                        MonitorViaHeartbeatUntilClosed(port, backendProc);
                     }
                 }
                 else

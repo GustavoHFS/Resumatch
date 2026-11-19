@@ -25,6 +25,9 @@ import type {
   SearchCriteria,
 } from '../types/api';
 
+export const SERVER_DISCONNECTED_MESSAGE =
+  'Servidor local desconectado. Feche e abra o Resumatch novamente.';
+
 export class ApiClientError extends Error {
   status: number;
 
@@ -33,6 +36,19 @@ export class ApiClientError extends Error {
     this.name = 'ApiClientError';
     this.status = status;
   }
+}
+
+const NETWORK_ERROR_PATTERN =
+  /failed to fetch|networkerror|network error|load failed|fetch failed|err_connection|network request failed|connection refused/i;
+
+export function isServerDisconnectedError(err: unknown): boolean {
+  if (err instanceof ApiClientError) {
+    return err.status === 0 || err.message === SERVER_DISCONNECTED_MESSAGE;
+  }
+  if (err instanceof Error) {
+    return NETWORK_ERROR_PATTERN.test(err.message);
+  }
+  return false;
 }
 
 export function createEmptyMasterProfile(): MasterProfile {
@@ -228,8 +244,15 @@ async function requestJson<T>(
     }
     return (await response.json()) as T;
   } catch (err) {
+    if (err instanceof ApiClientError) {
+      throw err;
+    }
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new ApiClientError('Requisição cancelada ou tempo limite excedido.', 408);
+    }
+    const rawMessage = err instanceof Error ? err.message : String(err ?? '');
+    if (NETWORK_ERROR_PATTERN.test(rawMessage)) {
+      throw new ApiClientError(SERVER_DISCONNECTED_MESSAGE, 0);
     }
     throw err;
   } finally {
@@ -250,7 +273,7 @@ export const api = {
     }, 4000),
 
   /* Vagas */
-  getJobs: (params: Record<string, string | number | undefined>) => {
+  getJobs: (params: Record<string, string | number | boolean | undefined>) => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== '') qs.set(k, String(v));

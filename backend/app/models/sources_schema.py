@@ -119,12 +119,18 @@ class RecruiteeSourceConfig(BaseSourceConfig):
 class GupyApiSourceConfig(BaseSourceConfig):
     type: Literal["gupy_api"]
     queries: list[str] = Field(default_factory=list, max_length=25)
+    search_urls: list[str] = Field(default_factory=list, max_length=15)
     career_subdomain: str | None = Field(default=None, max_length=80)
     career_page_name: str | None = Field(default=None, max_length=120)
     company_name: str | None = Field(default=None, max_length=120)
     state_filter: str | None = Field(default=None, max_length=60)
     include_remote: bool = True
     max_items: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("search_urls")
+    @classmethod
+    def check_search_urls(cls, value: list[str]) -> list[str]:
+        return [validate_https_only(url) for url in value]
 
 
 class GitHubIssuesSourceConfig(BaseSourceConfig):

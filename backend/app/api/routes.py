@@ -34,6 +34,11 @@ from app.services.profile_import_service import (
 
 router = APIRouter(prefix="/api", tags=["core"])
 
+# Long inactivity window: the launcher must never kill the backend because of a short
+# ping delay (minimized window, sleeping laptop, reload, network blip). Only a real
+# close beacon or a full 15-minute silence triggers shutdown.
+CLIENT_INACTIVITY_SECONDS = 15 * 60.0
+
 
 class GoogleConnectRequest(StrictModel):
     api_key: str = Field(min_length=10, max_length=300)
@@ -335,8 +340,8 @@ def lifecycle_ping(
     now = time.monotonic()
     active: dict[str, float] = state["active_clients"]
     active[cid] = now
-    # Prune stale tabs older than 15s
-    for k in [k for k, ts in active.items() if now - ts > 15.0]:
+    # Prune tabs only after the long inactivity window (never a short ping delay).
+    for k in [k for k, ts in active.items() if now - ts > CLIENT_INACTIVITY_SECONDS]:
         active.pop(k, None)
     state["ever_connected"] = True
     state["last_seen_at"] = now
@@ -368,7 +373,7 @@ def lifecycle_status(request: Request) -> dict[str, Any]:
     state = _get_lifecycle_state(request)
     now = time.monotonic()
     active: dict[str, float] = state["active_clients"]
-    for k in [k for k, ts in active.items() if now - ts > 15.0]:
+    for k in [k for k, ts in active.items() if now - ts > CLIENT_INACTIVITY_SECONDS]:
         active.pop(k, None)
     last_seen = state.get("last_seen_at")
     seconds_since = round(now - last_seen, 2) if isinstance(last_seen, (int, float)) else None
@@ -376,5 +381,6 @@ def lifecycle_status(request: Request) -> dict[str, Any]:
         "ever_connected": bool(state["ever_connected"]),
         "active_clients": len(active),
         "seconds_since_last_seen": seconds_since,
+        "inactivity_timeout_seconds": int(CLIENT_INACTIVITY_SECONDS),
         "closed_signal": bool(state["closed_signal"]),
     }

@@ -10,13 +10,11 @@
       "priority": "high",
       "respect_robots_txt": true,
       "rate_limit_seconds": 0.35,
-      "queries": [
-        "suporte Recife",
-        "desenvolvedor Recife",
-        "dados Recife",
-        "administrativo Recife",
-        "suporte ti junior",
-        "desenvolvedor junior"
+      "queries": [],
+      "search_urls": [
+        "https://portal.gupy.io/job-search/sortBy=publishedDate&state=Pernambuco&city[]=Recife,Jaboat%C3%A3o%20dos%20Guararapes?page=1",
+        "https://portal.gupy.io/job-search/sortBy=publishedDate&state=Pernambuco&city[]=Recife,Jaboat%C3%A3o%20dos%20Guararapes?page=2",
+        "https://portal.gupy.io/job-search/sortBy=publishedDate&state=Pernambuco&city[]=Recife,Jaboat%C3%A3o%20dos%20Guararapes?page=3"
       ],
       "include_remote": true,
       "max_items": 20,
@@ -53,7 +51,7 @@
       "queries": [
         "suporte ti help desk",
         "desenvolvedor junior sistemas",
-        "assistente administrativo tecnologia"
+        "analista de dados junior"
       ],
       "target_domains": [
         "br.indeed.com"
@@ -97,7 +95,7 @@
       "rate_limit_seconds": 0.5,
       "search_urls": [
         "https://www.catho.com.br/vagas/ti-recife-pe/",
-        "https://www.catho.com.br/vagas/administrativo-recife-pe/",
+        "https://www.catho.com.br/vagas/desenvolvimento-recife-pe/",
         "https://www.catho.com.br/vagas/home-office/"
       ],
       "requires_login_for_apply": true,
@@ -161,7 +159,7 @@
       "queries": [
         "suporte ti informatica",
         "desenvolvedor sistemas",
-        "assistente administrativo"
+        "analista de dados"
       ],
       "target_domains": [
         "vagas.solides.com.br"
@@ -204,7 +202,7 @@
       "rate_limit_seconds": 0.45,
       "queries": [
         "suporte tecnico informatica",
-        "assistente administrativo atendimento"
+        "tecnico de redes"
       ],
       "target_domains": [
         "trabalhabrasil.com.br"
@@ -517,7 +515,7 @@
       "rate_limit_seconds": 0.45,
       "queries": [
         "Ferreira Costa TI suporte sistemas",
-        "Ferreira Costa administrativo Recife"
+        "Ferreira Costa tecnologia Recife"
       ],
       "locations": [
         "Recife, PE"
