@@ -50,7 +50,7 @@ from app.domain.date_utils import (
     normalize_published_iso,
     parse_published_at_utc,
 )
-from app.domain.triage_engine import RawJobInput, contains_term, normalize_text
+from app.domain.triage_engine import RawJobInput, contains_term, is_non_tech_role, normalize_text
 from app.models.criteria_schema import SearchCriteria
 from app.models.sources_schema import (
     AshbySourceConfig,
@@ -165,10 +165,16 @@ def collect_allowed_hosts(sources: list[JobSourceEntry]) -> set[str]:
 
 
 def _match_catalog_areas(title: str, criteria: SearchCriteria) -> list[str]:
+    if is_non_tech_role(title):
+        return []
     matched: list[str] = []
     for area, terms in criteria.role_catalog.area_keywords.items():
         if any(contains_term(title, t) for t in terms):
             matched.append(area)
+    if not matched and any(contains_term(title, term) for term in (
+        "analista de suporte", "suporte de sistemas", "suporte em ti",
+    )):
+        matched.append("suporte")
     return matched
 
 
@@ -811,26 +817,27 @@ class GupyApiConnector:
                 if rows:
                     return rows
 
-        # Defensive recursive scan for hashed/renamed Next.js payload keys.
-        best: list[dict[str, Any]] = []
+        # Traverse Next.js and dehydrated state, retaining distinct job rows
+        # across multiple nested lists instead of only the largest one.
+        found: dict[str, dict[str, Any]] = {}
 
         def walk(node: Any, depth: int) -> None:
-            nonlocal best
-            if depth > 9:
+            if depth > 20:
                 return
             if isinstance(node, dict):
+                if cls._looks_like_job(node):
+                    key = str(node.get("id") or node.get("jobUrl"))
+                    found.setdefault(key, node)
+                    return
                 for value in node.values():
                     walk(value, depth + 1)
             elif isinstance(node, list):
-                job_rows = [x for x in node if cls._looks_like_job(x)]
-                if len(job_rows) > len(best):
-                    best = job_rows
                 for value in node:
                     if isinstance(value, (dict, list)):
                         walk(value, depth + 1)
 
-        walk(page_props, 0)
-        return best
+        walk(payload, 0)
+        return list(found.values())
 
     @staticmethod
     def _extract_html_fallback_jobs(raw_text: str) -> list[dict[str, Any]]:
@@ -890,6 +897,21 @@ class GupyApiConnector:
             return False
         return norm_want == norm_got or norm_want in norm_got or norm_got in norm_want
 
+    def _public_search_urls(self) -> list[str]:
+        state = self.criteria.target_state.strip()
+        cities = [city.strip() for city in self.criteria.target_cities if city.strip()]
+        region = f"&state={quote(state, safe='')}" if state else ""
+        if state and cities:
+            region += f"&city[]={quote(','.join(cities), safe='')}"
+        prefix = f"https://portal.gupy.io/job-search/sortBy=publishedDate{region}"
+        urls = [f"{prefix}?page={page}" for page in (1, 2, 3)]
+        if self.config.include_remote and self.criteria.include_remote:
+            urls.extend(
+                f"https://portal.gupy.io/job-search/sortBy=publishedDate&workplaceType[]=remote?page={page}"
+                for page in (1, 2)
+            )
+        return urls
+
     async def discover(
         self, seen_source_ids: dict[str, str] | None = None
     ) -> tuple[list[RawJobInput], list[dict[str, Any]], dict[str, Any]]:
@@ -903,14 +925,8 @@ class GupyApiConnector:
         is_public_search = bool(self.config.search_urls) or not is_company_board
 
         urls_to_fetch: list[str] = []
-        if self.config.search_urls:
-            urls_to_fetch.extend(self.config.search_urls)
-            if self.config.include_remote and self.criteria.include_remote:
-                urls_to_fetch.extend(
-                    f"https://portal.gupy.io/job-search/"
-                    f"sortBy=publishedDate&workplaceType[]=remote?page={page}"
-                    for page in (1, 2)
-                )
+        if not is_company_board:
+            urls_to_fetch.extend(self._public_search_urls())
         elif self.config.career_subdomain:
             urls_to_fetch.append(f"https://{self.config.career_subdomain.lower()}.gupy.io")
         elif self.config.career_page_name:
@@ -921,17 +937,13 @@ class GupyApiConnector:
                 f"https://portal.gupy.io/job-search/term={quote(self.config.career_page_name)}"
             )
         else:
-            terms = self.config.queries or [
-                "suporte Recife",
-                "desenvolvedor Recife",
-                "dados Recife",
-                "suporte ti junior",
-                "desenvolvedor junior",
-            ]
-            for term in terms:
-                urls_to_fetch.append(f"https://portal.gupy.io/job-search/term={quote(term)}")
+            urls_to_fetch.extend(self._public_search_urls())
 
+        regional_exhausted = False
         for url in urls_to_fetch:
+            is_remote_page = "workplaceType[]=remote" in url
+            if regional_exhausted and not is_remote_page and not is_company_board:
+                continue
             try:
                 raw_html = await self.client.get_text(
                     url,
@@ -947,6 +959,14 @@ class GupyApiConnector:
                         if row_id:
                             html_fallback_rows[row_id] = row
                     continue
+                if not is_company_board and not is_remote_page and rows and all(
+                    (item.get("publishedDate") or item.get("publishedAt"))
+                    and not is_published_within_days(
+                        item.get("publishedDate") or item.get("publishedAt"), max_days=MAX_RECENCY_DAYS,
+                        allow_missing=False,
+                    ) for item in rows
+                ):
+                    regional_exhausted = True
                 for item in rows:
                     jid = str(item.get("id") or item.get("jobUrl") or "")
                     if not jid:
@@ -994,9 +1014,11 @@ class GupyApiConnector:
             workplace = self._parse_workplace(raw)
             is_rem = workplace == "remoto"
 
-            if is_public_search and state and normalize_text(state) not in {
-                "pe",
-                "pernambuco",
+            target_state = normalize_text(self.criteria.target_state)
+            if is_public_search and target_state and state and normalize_text(state) not in {
+                target_state,
+                normalize_text(self.criteria.geography.allowed_cities[0].state_code)
+                if self.criteria.geography.allowed_cities else target_state,
             } and not is_rem:
                 continue
             if not self.criteria.include_remote and is_rem:

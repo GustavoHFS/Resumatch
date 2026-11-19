@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlsplit
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -107,6 +108,8 @@ def build_source_label(primary_source: str | None, url: str | None = None) -> st
     source = (primary_source or "").strip()
     if is_manual_source(source):
         return "Adicionada manualmente"
+    if (urlsplit(url or "").hostname or "").lower().endswith(".gupy.io"):
+        return "Gupy"
     blob = f"{source} {url or ''}".lower()
     for marker, label in SOURCE_LABEL_MARKERS:
         if marker in blob:

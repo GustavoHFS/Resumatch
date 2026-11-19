@@ -357,6 +357,10 @@ def upsert_and_triage_job(
         session.flush()
     else:
         opp = existing
+        if "gupy" in raw_job.source.lower() or (urlsplit(raw_job.url).hostname or "").endswith(".gupy.io"):
+            opp.primary_source = raw_job.source
+            opp.original_url = raw_job.url
+            opp.canonical_url = canon_url
         is_ghost = _is_ghost_repost(session, opp, timestamp)
         if is_ghost:
             triage_dict["ghost_repost_detected"] = True
