@@ -273,13 +273,13 @@ export const api = {
     }, 4000),
 
   /* Vagas */
-  getJobs: (params: Record<string, string | number | boolean | undefined>) => {
+  getJobs: (params: Record<string, string | number | boolean | undefined>, signal?: AbortSignal) => {
     const qs = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => {
       if (v !== undefined && v !== '') qs.set(k, String(v));
     });
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    return requestJson<{ total: number; items: JobListItem[] }>(`/api/jobs${suffix}`);
+    return requestJson<{ total: number; items: JobListItem[] }>(`/api/jobs${suffix}`, { signal });
   },
 
   getJobDetail: (opportunityId: string) =>
@@ -370,6 +370,8 @@ export const api = {
     draft: ResumeDraft;
     opportunity_id?: string | null;
     auto_fit?: boolean;
+    manual_job_description?: string;
+    manual_job_url?: string;
   }) =>
     requestJson<ExportPdfResponse>(
       '/api/resumes/export-pdf',

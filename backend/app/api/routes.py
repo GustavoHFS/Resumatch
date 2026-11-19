@@ -31,6 +31,7 @@ from app.services.profile_import_service import (
     ProfileImportError,
     import_profile_from_uploaded_file,
 )
+from app.services.discovery_service import reconcile_triage_in_sqlite
 
 router = APIRouter(prefix="/api", tags=["core"])
 
@@ -136,6 +137,7 @@ def read_master_profile(
 @router.put("/profile")
 def update_master_profile(
     payload: MasterProfile,
+    request: Request,
     settings: AppSettings = Depends(get_app_settings),
 ) -> dict[str, Any]:
     backup_name = atomic_write_validated_json(
@@ -144,6 +146,7 @@ def update_master_profile(
         backups_dir=settings.backups_dir,
         max_backups=settings.max_config_backups,
     )
+    reconcile_triage_in_sqlite(request.app.state.engine, settings, create_backup=False, fast=True)
     return {
         "status": "updated",
         "backup_snapshot": backup_name,
@@ -180,6 +183,7 @@ def read_search_criteria(
 @router.put("/config/criteria")
 def update_search_criteria(
     payload: SearchCriteria,
+    request: Request,
     settings: AppSettings = Depends(get_app_settings),
 ) -> dict[str, Any]:
     backup_name = atomic_write_validated_json(
@@ -188,6 +192,7 @@ def update_search_criteria(
         backups_dir=settings.backups_dir,
         max_backups=settings.max_config_backups,
     )
+    reconcile_triage_in_sqlite(request.app.state.engine, settings, create_backup=False, fast=True)
     return {
         "status": "updated",
         "backup_snapshot": backup_name,
@@ -209,6 +214,7 @@ def read_blocked_companies(
 @router.put("/config/blocked")
 def update_blocked_companies(
     payload: BlockedCompaniesConfig,
+    request: Request,
     settings: AppSettings = Depends(get_app_settings),
 ) -> dict[str, Any]:
     backup_name = atomic_write_validated_json(
@@ -217,6 +223,7 @@ def update_blocked_companies(
         backups_dir=settings.backups_dir,
         max_backups=settings.max_config_backups,
     )
+    reconcile_triage_in_sqlite(request.app.state.engine, settings, create_backup=False, fast=True)
     return {
         "status": "updated",
         "backup_snapshot": backup_name,

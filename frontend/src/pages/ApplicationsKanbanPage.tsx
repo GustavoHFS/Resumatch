@@ -137,6 +137,16 @@ export const ApplicationsKanbanPage: React.FC = () => {
                       </div>
 
                       <div className={styles.cardFooter}>
+                        {col.key === 'ready' && (
+                          <div className={styles.quickActions}>
+                            {card.job.original_url && !card.job.original_url.startsWith('https://manual.resumatch.local/') && !card.job.original_url.includes('vaga-manual.local') && (
+                              <a href={card.job.original_url} target="_blank" rel="noreferrer" className="btnSubtle btnSmall">Abrir Vaga ↗</a>
+                            )}
+                            <button type="button" className="btnGhost btnSmall" onClick={() => void handleMoveStage(card.opportunity_id, 'sent')}>
+                              Já enviei ✓
+                            </button>
+                          </div>
+                        )}
                         <select
                           className={`select ${styles.stageSelect}`}
                           value={bucketForStage(card.stage)}

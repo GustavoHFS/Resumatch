@@ -60,6 +60,30 @@ const AccordionBox: React.FC<AccordionProps> = ({ title, meta, isOpen, onToggle,
 
 const makeId = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
 
+function validSaveDraft(draft: MasterProfile): MasterProfile | null {
+  if (draft.header.full_name.trim().length < 2 || draft.header.full_name.length > 140) return null;
+  if (draft.header.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.header.email)) return null;
+  if (draft.header.links.some((link) => !link.label.trim() || !/^https:\/\/[^\s.]+\.[^\s]+$/.test(link.url))) return null;
+  if (draft.projects.some((prj) => prj.url && !/^https:\/\/[^\s.]+\.[^\s]+$/.test(prj.url))) return null;
+  const required = [
+    ...draft.experiences.map((x) => [x.role, x.company, x.period, x.location, x.description]),
+    ...draft.education.map((x) => [x.degree, x.institution, x.period, x.details]),
+    ...draft.courses.map((x) => [x.title, x.institution, x.workload, x.completion_date, x.description]),
+    ...draft.projects.map((x) => [x.name, x.url ?? '', x.description]),
+    ...draft.languages.map((x) => [x.language, x.proficiency]),
+  ];
+  // A partially edited item must not disappear from disk until its required title is present.
+  if (required.some(([title, ...rest]) => !title.trim() && rest.some((x) => x.trim()))) return null;
+  return {
+    ...draft,
+    experiences: draft.experiences.filter((x) => x.role.trim()),
+    education: draft.education.filter((x) => x.degree.trim()),
+    courses: draft.courses.filter((x) => x.title.trim()),
+    projects: draft.projects.filter((x) => x.name.trim()),
+    languages: draft.languages.filter((x) => x.language.trim()),
+  };
+}
+
 export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => {
   const [draft, setDraft] = useState<MasterProfile | null>(
     profile ? normalizeMasterProfile(profile) : null
@@ -79,6 +103,12 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
 
   const [newSkillText, setNewSkillText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState('');
+  const [undoDraft, setUndoDraft] = useState<MasterProfile | null>(null);
+  const lastSavedRef = useRef(profile ? JSON.stringify(normalizeMasterProfile(profile)) : '');
+  const failedSnapshotRef = useRef('');
+  const currentDraftRef = useRef(draft);
+  currentDraftRef.current = draft;
   const [importing, setImporting] = useState(false);
   const [importingFileName, setImportingFileName] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -90,7 +120,8 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
     setLoadError(null);
     try {
       const fresh = await api.getProfile();
-      setDraft(fresh);
+      if (!currentDraftRef.current) setDraft(fresh);
+      lastSavedRef.current = JSON.stringify(fresh);
       onProfileSaved(fresh);
     } catch (err) {
       setLoadError(
@@ -105,13 +136,49 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
 
   useEffect(() => {
     if (profile) {
-      setDraft(normalizeMasterProfile(profile));
+      if (!currentDraftRef.current) setDraft(normalizeMasterProfile(profile));
       setLoadError(null);
       setLoading(false);
-    } else {
+    } else if (!currentDraftRef.current) {
       void fetchProfileDirectly();
     }
   }, [profile, fetchProfileDirectly]);
+
+  useEffect(() => {
+    if (!draft || importing || saving) return;
+    const savable = validSaveDraft(draft);
+    if (!savable) return;
+    const snapshot = JSON.stringify(savable);
+    if (snapshot === lastSavedRef.current || snapshot === failedSnapshotRef.current) return;
+    setSaveState('Salvando...');
+    const timer = window.setTimeout(async () => {
+      setSaving(true);
+      try {
+        const res = await api.saveProfile(savable);
+        lastSavedRef.current = snapshot;
+        onProfileSaved(res.profile);
+        setSaveState('Salvo automaticamente');
+      } catch (err) {
+        failedSnapshotRef.current = snapshot;
+        setSaveState('Não foi possível salvar automaticamente');
+        setNotice(err instanceof Error ? err.message : 'Verifique os campos preenchidos.');
+      } finally {
+        setSaving(false);
+      }
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [draft, importing, saving, onProfileSaved]);
+
+  const removeItem = (key: 'experiences' | 'education' | 'courses' | 'projects' | 'languages', idx: number) => {
+    if (!draft) return;
+    const item = draft[key][idx];
+    const filled = Object.entries(item).some(([field, value]) => field !== 'id' && Boolean(value));
+    if (filled) {
+      setUndoDraft(draft);
+      setNotice('Item excluído. Você pode desfazer esta alteração.');
+    }
+    setDraft({ ...draft, [key]: draft[key].filter((_, i) => i !== idx) });
+  };
 
   const toggleSection = (key: SectionKey) => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -152,11 +219,17 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
 
   const handleSave = async () => {
     if (!draft) return;
+    const savable = validSaveDraft(draft);
+    if (!savable) {
+      setNotice('Preencha o nome e os títulos dos itens iniciados antes de salvar.');
+      return;
+    }
     setSaving(true);
     setNotice(null);
     try {
-      const res = await api.saveProfile(draft);
-      setDraft(res.profile);
+      const res = await api.saveProfile(savable);
+      lastSavedRef.current = JSON.stringify(res.profile);
+      if (currentDraftRef.current === draft) setDraft(res.profile);
       onProfileSaved(res.profile);
       setNotice('Currículo Base salvo com sucesso.');
     } catch (err) {
@@ -247,6 +320,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
         </div>
 
         <div className={styles.headerActions}>
+          <span role="status" aria-live="polite">{saveState}</span>
           <button type="button" className="btnGhost" disabled={saving} onClick={handleSave}>
             {saving ? 'Salvando...' : 'Salvar Alterações'}
           </button>
@@ -293,6 +367,13 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
       {notice && (
         <div className="noticeBar" role="status">
           <span>{notice}</span>
+          {undoDraft && (
+            <button type="button" className="btnSubtle btnSmall" onClick={() => {
+              setDraft(undoDraft);
+              setUndoDraft(null);
+              setNotice('Exclusão desfeita.');
+            }}>Desfazer</button>
+          )}
           <button
             type="button"
             className="iconBtn"
@@ -550,12 +631,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   type="button"
                   className="iconBtn"
                   title="Excluir experiência"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      experiences: draft.experiences.filter((_, i) => i !== idx),
-                    })
-                  }
+                  onClick={() => removeItem('experiences', idx)}
                 >
                   <IconTrash size={15} />
                 </button>
@@ -673,12 +749,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   type="button"
                   className="iconBtn"
                   title="Excluir formação"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      education: draft.education.filter((_, i) => i !== idx),
-                    })
-                  }
+                  onClick={() => removeItem('education', idx)}
                 >
                   <IconTrash size={15} />
                 </button>
@@ -783,12 +854,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   type="button"
                   className="iconBtn"
                   title="Excluir curso"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      courses: draft.courses.filter((_, i) => i !== idx),
-                    })
-                  }
+                  onClick={() => removeItem('courses', idx)}
                 >
                   <IconTrash size={15} />
                 </button>
@@ -908,12 +974,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   type="button"
                   className="iconBtn"
                   title="Excluir projeto"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      projects: draft.projects.filter((_, i) => i !== idx),
-                    })
-                  }
+                  onClick={() => removeItem('projects', idx)}
                 >
                   <IconTrash size={15} />
                 </button>
@@ -1047,12 +1108,7 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                   type="button"
                   className="iconBtn"
                   title="Excluir idioma"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      languages: draft.languages.filter((_, i) => i !== idx),
-                    })
-                  }
+                  onClick={() => removeItem('languages', idx)}
                 >
                   <IconTrash size={15} />
                 </button>

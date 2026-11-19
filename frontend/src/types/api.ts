@@ -295,6 +295,8 @@ export interface GenerateResumeResponse {
 
 export interface ExportPdfResponse {
   version_id: string;
+  opportunity_id?: string | null;
+  job_url?: string | null;
   generation_mode: string;
   export_rel_path: string;
   output_pdf_filename: string;

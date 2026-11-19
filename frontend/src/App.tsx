@@ -87,6 +87,7 @@ export const App: React.FC = () => {
     setStudioJobDescription(descriptionText);
     setActiveTab('studio');
   };
+  const handleProfileSaved = useCallback((updated: MasterProfile) => setProfile(updated), []);
 
   return (
     <div className={styles.appShell}>
@@ -136,26 +137,26 @@ export const App: React.FC = () => {
       </header>
 
       <main className={styles.mainContent}>
-        <div key={activeTab} className={styles.pageStage}>
+        <div className={styles.pageStage}>
           {activeTab === 'jobs' && <JobsPage onAdaptJob={handleAdaptJob} />}
 
-          {activeTab === 'studio' && (
+          <div hidden={activeTab !== 'studio'}>
             <ResumeStudioPage
               aiConnected={Boolean(health?.ai_connected)}
               initialJob={studioJob}
               initialJobDescription={studioJobDescription}
               onAiConnected={refreshHealth}
             />
-          )}
+          </div>
 
           {activeTab === 'applications' && <ApplicationsKanbanPage />}
 
-          {activeTab === 'profile' && (
+          <div hidden={activeTab !== 'profile'}>
             <BaseResumePage
               profile={profile}
-              onProfileSaved={(updated) => setProfile(updated)}
+              onProfileSaved={handleProfileSaved}
             />
-          )}
+          </div>
         </div>
       </main>
 

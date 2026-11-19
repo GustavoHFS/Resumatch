@@ -11,7 +11,7 @@ import shutil
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import httpx
@@ -62,7 +62,7 @@ def utc_now_iso() -> str:
 
 
 class AssistedJobImportRequest(StrictModel):
-    url: str = Field(min_length=8, max_length=1000)
+    url: str = Field(default="", max_length=1000)
     title: str | None = Field(default=None, max_length=300)
     company: str | None = Field(default=None, max_length=200)
     location: str | None = Field(default=None, max_length=200)
@@ -145,6 +145,17 @@ def _find_existing_opportunity(
         if opp:
             return opp
 
+    # Manual listings cannot overwrite another job just because they share a
+    # careers page, title or cross-portal signature.
+    if is_manual_source(source_name):
+        if fingerprint:
+            exact = session.exec(
+                select(JobOpportunity).where(JobOpportunity.content_fingerprint == fingerprint)
+            ).first()
+            if exact and not is_manual_source(exact.primary_source):
+                return exact
+        return None
+
     # 2. Content fingerprint match (identical company + title + location + full description)
     if fingerprint:
         obs_by_fp = session.exec(
@@ -155,12 +166,12 @@ def _find_existing_opportunity(
         ).first()
         if obs_by_fp:
             opp = session.get(JobOpportunity, obs_by_fp.opportunity_id)
-            if opp:
+            if opp and not is_manual_source(opp.primary_source):
                 return opp
         opp_by_fp = session.exec(
             select(JobOpportunity).where(JobOpportunity.content_fingerprint == fingerprint)
         ).first()
-        if opp_by_fp:
+        if opp_by_fp and not is_manual_source(opp_by_fp.primary_source):
             return opp_by_fp
 
     # 3. Canonical URL match (verified against normalized title when multiple listings share a page)
@@ -170,7 +181,9 @@ def _find_existing_opportunity(
             select(JobOpportunity).where(JobOpportunity.canonical_url == canon_url)
         ).all()
         for cand in opp_candidates:
-            if normalize_text(cand.title).strip() == norm_title or len(opp_candidates) == 1:
+            if not is_manual_source(cand.primary_source) and (
+                normalize_text(cand.title).strip() == norm_title or len(opp_candidates) == 1
+            ):
                 return cand
 
         obs_candidates = session.exec(
@@ -178,7 +191,7 @@ def _find_existing_opportunity(
         ).all()
         for obs in obs_candidates:
             opp = session.get(JobOpportunity, obs.opportunity_id)
-            if opp and normalize_text(opp.title).strip() == norm_title:
+            if opp and not is_manual_source(opp.primary_source) and normalize_text(opp.title).strip() == norm_title:
                 return opp
 
     # 4. Cross-portal normalized signature (`slug(company)__slug(clean_title)__slug(city_or_remoto)`)
@@ -186,7 +199,7 @@ def _find_existing_opportunity(
         opp_by_xsig = session.exec(
             select(JobOpportunity).where(JobOpportunity.content_fingerprint == xportal_sig)
         ).first()
-        if opp_by_xsig:
+        if opp_by_xsig and not is_manual_source(opp_by_xsig.primary_source):
             return opp_by_xsig
 
         company_rows = session.exec(
@@ -199,10 +212,23 @@ def _find_existing_opportunity(
                 cand.location,
                 cand.workplace_mode,
             )
-            if cand_sig == xportal_sig:
+            if cand_sig == xportal_sig and not is_manual_source(cand.primary_source):
                 return cand
 
     return None
+
+
+def _validate_manual_job_url(url: str) -> None:
+    """Manual URLs are never fetched: keep public-host checks, allow ATS tokens.
+
+    The generated local marker is accepted only for manual jobs and is not a
+    connector allowlist entry. Other localhost/private URLs remain forbidden.
+    """
+    parsed = urlsplit(url)
+    if parsed.hostname == "manual.resumatch.local" and parsed.path.startswith("/vaga/"):
+        if parsed.scheme == "https" and not parsed.username and not parsed.password and not parsed.port:
+            return
+    validate_public_https_url(urlunsplit(parsed._replace(query="", fragment="")))
 
 
 def _is_ghost_repost(session: Session, opp: JobOpportunity, now_iso: str) -> bool:
@@ -239,7 +265,10 @@ def upsert_and_triage_job(
 ) -> tuple[JobOpportunity, TriageResult, bool]:
     """Evaluates `raw_job` and upserts canonically with honest dates & anti-ghost-job protection."""
     timestamp = now_iso or utc_now_iso()
-    validate_public_https_url(raw_job.url)
+    if is_manual_source(raw_job.source):
+        _validate_manual_job_url(raw_job.url)
+    else:
+        validate_public_https_url(raw_job.url)
     canon_url = canonicalize_url(raw_job.url)
     fp = compute_job_fingerprint(
         raw_job.company,
@@ -440,7 +469,8 @@ def import_assisted_job(
     settings: AppSettings,
     payload: AssistedJobImportRequest,
 ) -> dict[str, Any]:
-    validate_public_https_url(payload.url)
+    job_url = payload.url.strip() or f"https://manual.resumatch.local/vaga/{uuid4()}"
+    _validate_manual_job_url(job_url)
     profile, criteria, blocked, _ = load_domain_configs(settings)
     engine = DeterministicTriageEngine(criteria=criteria, blocked=blocked, profile=profile)
 
@@ -454,13 +484,15 @@ def import_assisted_job(
     if not desc:
         desc = f"{inferred_title} - {payload.company or 'Empresa não informada'}"
 
-    canon = canonicalize_url(payload.url)
+    canon = canonicalize_url(job_url)
     raw_job = RawJobInput(
         source="manual:assisted_import",
-        source_id=hashlib.sha256(canon.encode("utf-8")).hexdigest()[:24],
+        source_id=hashlib.sha256(
+            f"{canon}\n{inferred_title}\n{desc}".encode("utf-8")
+        ).hexdigest()[:24],
         title=inferred_title,
         company=payload.company,
-        url=payload.url,
+        url=job_url,
         description=desc,
         location=payload.location,
         workplace_mode=payload.workplace_mode,
@@ -765,10 +797,11 @@ def reconcile_triage_in_sqlite(
     settings: AppSettings,
     *,
     create_backup: bool = True,
+    fast: bool = False,
 ) -> dict[str, Any]:
     """Purges navigation garbage rows and recalculates deterministic triage for all legacy SQLite opportunities."""
     backup_filename: str | None = None
-    if create_backup and settings.db_path.is_file():
+    if create_backup and not fast and settings.db_path.is_file():
         settings.backups_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup_path = settings.backups_dir / f"app.{ts}.bak.sqlite3"
@@ -788,12 +821,17 @@ def reconcile_triage_in_sqlite(
     with Session(db_engine) as session:
         all_opps = session.exec(select(JobOpportunity)).all()
         for opp in all_opps:
-            tracking = session.get(ApplicationTracking, opp.id)
+            if fast and is_manual_source(opp.primary_source):
+                continue
+            if fast:
+                tracking = None
+            else:
+                tracking = session.get(ApplicationTracking, opp.id)
             is_user_progressed = tracking is not None and tracking.stage not in {
                 "descoberta",
                 "candidatura_a_preparar",
             }
-            should_purge = not is_user_progressed and (
+            should_purge = not fast and not is_user_progressed and (
                 is_garbage_job_candidate(opp.title, opp.original_url)
                 or (
                     not is_manual_source(opp.primary_source)

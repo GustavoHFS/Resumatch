@@ -190,3 +190,22 @@
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
+.primaryButton {
+  background: var(--text-primary);
+  color: var(--bg-deep);
+  border-color: var(--text-primary);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--text-secondary);
+  color: var(--bg-deep);
+}
+
+.filterToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 12px;
+}

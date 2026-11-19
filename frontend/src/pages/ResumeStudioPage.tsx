@@ -69,6 +69,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
   const [generating, setGenerating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [loadingSelectedJob, setLoadingSelectedJob] = useState(false);
+  const [skillInputs, setSkillInputs] = useState<Record<string, string>>({});
+  const [downloadJob, setDownloadJob] = useState<{ id: string; url: string } | null>(null);
 
   const [zoom, setZoom] = useState<number>(0.72);
   const [contentFlowPx, setContentFlowPx] = useState<number>(680);
@@ -78,12 +81,16 @@ export const ResumeStudioPage: React.FC<Props> = ({
   useEffect(() => {
     api
       .getJobs({ limit: 80 })
-      .then((res) => setJobs(res.items))
+      .then((res) => setJobs((current) => [
+        ...current.filter((job) => !res.items.some((item) => item.id === job.id)),
+        ...res.items,
+      ]))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (initialJob) {
+      setJobs((current) => current.some((job) => job.id === initialJob.id) ? current : [initialJob, ...current]);
       setSelectedOpportunityId(initialJob.id);
       setManualTitle(initialJob.title);
       setManualCompany(initialJob.company ?? '');
@@ -91,6 +98,24 @@ export const ResumeStudioPage: React.FC<Props> = ({
       setShowManualBox(false);
     }
   }, [initialJob, initialJobDescription]);
+
+  useEffect(() => {
+    if (!selectedOpportunityId) return;
+    let cancelled = false;
+    setLoadingSelectedJob(true);
+    setManualDescription('');
+    api.getJobDetail(selectedOpportunityId).then((res) => {
+      if (cancelled) return;
+      setManualTitle(res.opportunity.title);
+      setManualCompany(res.opportunity.company ?? '');
+      setManualDescription(res.opportunity.description_text ?? '');
+    }).catch((err) => {
+      if (!cancelled) setNotice(err instanceof Error ? err.message : 'Não foi possível carregar a vaga.');
+    }).finally(() => {
+      if (!cancelled) setLoadingSelectedJob(false);
+    });
+    return () => { cancelled = true; };
+  }, [selectedOpportunityId]);
 
   // Live HTML refresh whenever draft changes (with AbortController + sequence guard against race conditions)
   useEffect(() => {
@@ -117,6 +142,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
   }, [draft]);
 
   const handleGenerate = async () => {
+    if (loadingSelectedJob) return;
     setGenerating(true);
     setNotice(null);
     try {
@@ -144,6 +170,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
       const res = await api.exportResumePdf({
         draft,
         opportunity_id: selectedOpportunityId || null,
+        manual_job_description: !selectedOpportunityId ? manualDescription : undefined,
         auto_fit: true,
       });
       setDraft(res.draft);
@@ -154,11 +181,49 @@ export const ResumeStudioPage: React.FC<Props> = ({
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
+      if (res.opportunity_id) {
+        setSelectedOpportunityId(res.opportunity_id);
+        setDownloadJob({ id: res.opportunity_id, url: res.job_url ?? '' });
+      }
       setNotice(`PDF "${res.output_pdf_filename}" gerado e baixado.`);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Erro ao exportar o PDF.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice('Copiado para a área de transferência.');
+    } catch {
+      setNotice('Não foi possível copiar o texto.');
+    }
+  };
+
+  const restoreSection = async (kind: SectionKind) => {
+    if (!draft) return;
+    try {
+      const profile = await api.getProfile();
+      const restored: Partial<ResumeDraft> = {};
+      if (kind === 'summary') restored.summary = profile.summary;
+      if (kind === 'experience') restored.experiences = profile.experiences.map((exp) => ({
+        ...exp, highlights: exp.description ? [exp.description] : [],
+      }));
+      if (kind === 'education') restored.education = profile.education;
+      if (kind === 'projects') restored.projects = profile.projects.map((prj) => ({
+        ...prj, highlights: [],
+      }));
+      if (kind === 'courses') restored.courses = profile.courses;
+      if (kind === 'skills') restored.skill_groups = [{
+        id: 'base_skills', label: 'Competências Técnicas', items: profile.skills,
+      }];
+      if (kind === 'languages') restored.languages = profile.languages;
+      setDraft((current) => current ? { ...current, ...restored } : current);
+      setNotice(`${SECTION_NAMES_PT[kind]} restaurado do Currículo Base.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Não foi possível restaurar a seção.');
     }
   };
 
@@ -236,15 +301,19 @@ export const ResumeStudioPage: React.FC<Props> = ({
             <select
               className="select"
               value={selectedOpportunityId}
-              onChange={(e) => {
-                const id = e.target.value;
-                setSelectedOpportunityId(id);
-                const found = jobs.find((j) => j.id === id);
-                if (found) {
-                  setManualTitle(found.title);
-                  setManualCompany(found.company ?? '');
-                }
-              }}
+               onChange={(e) => {
+                 const id = e.target.value;
+                 setSelectedOpportunityId(id);
+                 setManualDescription('');
+                 const found = jobs.find((j) => j.id === id);
+                 if (found) {
+                   setManualTitle(found.title);
+                   setManualCompany(found.company ?? '');
+                 } else {
+                   setManualTitle('');
+                   setManualCompany('');
+                 }
+               }}
             >
               <option value="">Colar descrição avulsa abaixo</option>
               {jobs.map((j) => (
@@ -347,7 +416,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
             <button
               type="button"
               className="btnGhost"
-              disabled={generating || !aiConnected}
+              disabled={generating || loadingSelectedJob || !aiConnected}
               onClick={handleGenerate}
             >
               <IconSparkles size={15} />
@@ -367,6 +436,20 @@ export const ResumeStudioPage: React.FC<Props> = ({
             >
               <IconClose size={15} />
             </button>
+          </div>
+        )}
+        {downloadJob && (
+          <div className="noticeBar">
+            {downloadJob.url && !downloadJob.url.startsWith('https://manual.resumatch.local/') && (
+              <a className="btnSubtle btnSmall" href={downloadJob.url} target="_blank" rel="noreferrer">Abrir Vaga ↗</a>
+            )}
+            <button type="button" className="btnGhost btnSmall" onClick={async () => {
+              try {
+                await api.transitionStage(downloadJob.id, { stage: 'enviada_manualmente', confirm_manual_submission: true });
+                setNotice('Candidatura marcada como enviada.');
+                setDownloadJob(null);
+              } catch (err) { setNotice(err instanceof Error ? err.message : 'Não foi possível marcar a candidatura.'); }
+            }}>Já enviei ✓</button>
           </div>
         )}
 
@@ -443,6 +526,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
                             setDraft({ ...draft, header: { ...draft.header, links: next } });
                           }}
                         />
+                        <button type="button" className="btnSubtle btnSmall" onClick={() => void copyText(lnk.url)}>
+                          Copiar
+                        </button>
                         <button
                           type="button"
                           className="iconBtn"
@@ -483,6 +569,12 @@ export const ResumeStudioPage: React.FC<Props> = ({
                   </button>
 
                   <div className={styles.accordionActions}>
+                    <button type="button" className="btnSubtle btnSmall" onClick={() => void restoreSection(secKind)}>
+                      ↺ Restaurar do Currículo Base
+                    </button>
+                    {secKind === 'summary' && (
+                      <button type="button" className="btnSubtle btnSmall" onClick={() => void copyText(draft.summary)}>Copiar</button>
+                    )}
                     <button
                       type="button"
                       className="iconBtn"
@@ -528,6 +620,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
                       draft.experiences.map((exp, eIdx) => (
                         <div key={exp.id} className={styles.subBlock}>
                           <div className={styles.subHead}>
+                            <button type="button" className="btnSubtle btnSmall" onClick={() => void copyText(
+                              [exp.role, exp.company, exp.period, exp.description, ...exp.highlights].filter(Boolean).join('\n')
+                            )}>Copiar</button>
                             <input
                               className="input"
                               value={exp.role}
@@ -551,6 +646,18 @@ export const ResumeStudioPage: React.FC<Props> = ({
                               <IconTrash size={14} />
                             </button>
                           </div>
+
+                          <textarea
+                            rows={2}
+                            className="textarea"
+                            placeholder="Descrição da experiência"
+                            value={exp.description}
+                            onChange={(e) => {
+                              const next = [...draft.experiences];
+                              next[eIdx] = { ...exp, description: e.target.value };
+                              setDraft({ ...draft, experiences: next });
+                            }}
+                          />
 
                           <div className={styles.grid2}>
                             <input
@@ -728,6 +835,17 @@ export const ResumeStudioPage: React.FC<Props> = ({
                               setDraft({ ...draft, projects: next });
                             }}
                           />
+                          <textarea
+                            rows={2}
+                            className="textarea"
+                            placeholder="Destaques do projeto (um por linha)"
+                            value={prj.highlights.join('\n')}
+                            onChange={(e) => {
+                              const next = [...draft.projects];
+                              next[idx] = { ...prj, highlights: e.target.value.split('\n') };
+                              setDraft({ ...draft, projects: next });
+                            }}
+                          />
                         </div>
                       ))}
 
@@ -835,8 +953,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
                           <input
                             className="input"
                             placeholder="Competências separadas por vírgula"
-                            value={grp.items.join(', ')}
+                            value={skillInputs[grp.id] ?? grp.items.join(', ')}
                             onChange={(e) => {
+                              setSkillInputs((current) => ({ ...current, [grp.id]: e.target.value }));
                               const next = [...draft.skill_groups];
                               next[gIdx] = {
                                 ...grp,
@@ -847,6 +966,11 @@ export const ResumeStudioPage: React.FC<Props> = ({
                               };
                               setDraft({ ...draft, skill_groups: next });
                             }}
+                            onBlur={() => setSkillInputs((current) => {
+                              const next = { ...current };
+                              delete next[grp.id];
+                              return next;
+                            })}
                           />
                         </div>
                       ))}

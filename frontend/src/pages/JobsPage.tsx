@@ -61,6 +61,8 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
   const [searchingSources, setSearchingSources] = useState(false);
 
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [showDiscarded, setShowDiscarded] = useState(false);
   const [recencyFilter, setRecencyFilter] = useState('14d');
   const [areaFilter, setAreaFilter] = useState('');
   const [criteria, setCriteria] = useState<SearchCriteria | null>(null);
@@ -83,31 +85,37 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
     workplace_mode: null,
   });
 
-  const loadJobs = useCallback(async () => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const loadJobs = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
       const res = await api.getJobs({
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         recency: recencyFilter,
         area_id: areaFilter || undefined,
         include_remote: remoteActive ? undefined : false,
+        show_discarded: showDiscarded,
         limit: 100,
-      });
+      }, signal);
+      if (signal?.aborted) return;
       setJobs(res.items);
-      if (res.items.length > 0 && !res.items.some((j) => j.id === selectedId)) {
-        setSelectedId(res.items[0].id);
-      } else if (res.items.length === 0) {
-        setSelectedId(null);
-      }
+      setSelectedId((current) => res.items.some((j) => j.id === current)
+        ? current : res.items[0]?.id ?? null);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : 'Não foi possível carregar as vagas.');
+      if (!signal?.aborted) setNotice(err instanceof Error ? err.message : 'Não foi possível carregar as vagas.');
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  }, [search, recencyFilter, areaFilter, remoteActive, selectedId]);
+  }, [debouncedSearch, recencyFilter, areaFilter, remoteActive, showDiscarded]);
 
   useEffect(() => {
-    void loadJobs();
+    const controller = new AbortController();
+    void loadJobs(controller.signal);
+    return () => controller.abort();
   }, [loadJobs]);
 
   useEffect(() => {
@@ -201,16 +209,22 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
 
   const handlePasteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const adapt = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'adapt';
     setSavingPaste(true);
     try {
-      const normalizedUrl = pasteForm.url.trim() || 'https://vaga-manual.local/anuncio';
+      const normalizedUrl = pasteForm.url.trim();
+      const textLines = pasteForm.description.split('\n').map((line) => line.trim()).filter(Boolean);
+      const inferredTitle = textLines.find((line) => /^(?:cargo|vaga|título)\s*:/i.test(line))
+        ?.replace(/^[^:]+:\s*/, '') || textLines[0]?.slice(0, 180) || 'Vaga colada';
+      const inferredCompany = textLines.find((line) => /^empresa\s*:/i.test(line))
+        ?.replace(/^[^:]+:\s*/, '');
       const res = await api.importAssistedJob({
         ...pasteForm,
         url: normalizedUrl.startsWith('http://')
           ? normalizedUrl.replace(/^http:\/\//i, 'https://')
           : normalizedUrl,
-        title: pasteForm.title?.trim() || undefined,
-        company: pasteForm.company?.trim() || undefined,
+        title: pasteForm.title?.trim() || inferredTitle,
+        company: pasteForm.company?.trim() || inferredCompany,
         location: pasteForm.location?.trim() || undefined,
       });
       setShowPasteModal(false);
@@ -224,6 +238,10 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
       });
       setSelectedId(res.opportunity_id);
       await loadJobs();
+      if (adapt) {
+        const selected = await api.getJobDetail(res.opportunity_id);
+        onAdaptJob(selected.opportunity, selected.opportunity.description_text || pasteForm.description);
+      }
       setNotice('Vaga adicionada à lista.');
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Verifique os dados da vaga colada.');
@@ -262,6 +280,11 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
             </option>
           ))}
         </select>
+
+        <label className={styles.filterToggle}>
+          <input type="checkbox" checked={showDiscarded} onChange={(e) => setShowDiscarded(e.target.checked)} />
+          Mostrar descartadas
+        </label>
 
         <select
           className="select"
@@ -328,8 +351,11 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
             <div className={styles.empty}>Carregando vagas...</div>
           ) : visibleJobs.length === 0 ? (
             <div className={styles.empty}>
-              Nenhuma vaga listada para este filtro. Use &ldquo;Buscar Vagas&rdquo; ou &ldquo;Colar
-              Vaga&rdquo;.
+              <p>Nenhuma vaga listada para este filtro.</p>
+              <button type="button" className="btnSubtle" onClick={() => {
+                setSearch(''); setAreaFilter(''); setRecencyFilter('14d'); setShowDiscarded(false);
+              }}>Limpar filtros</button>
+              <button type="button" className="btnGhost" onClick={() => void handleRunDiscovery()}>Buscar novas vagas</button>
             </div>
           ) : (
             visibleJobs.map((job) => (
@@ -370,7 +396,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                 <div className={styles.ctaRow}>
                   <button
                     type="button"
-                    className="btnGhost"
+                    className={`btnGhost ${styles.primaryButton}`}
                     onClick={() =>
                       onAdaptJob(detail.opportunity, detail.opportunity.description_text || '')
                     }
@@ -448,7 +474,6 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
               <div className="field">
                 <label className="label">Cargo</label>
                 <input
-                  required
                   className="input"
                   placeholder="Ex.: Desenvolvedor Júnior"
                   value={pasteForm.title ?? ''}
@@ -480,9 +505,8 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                 <label className="label">Link da vaga (https://)</label>
                 <input
                   type="url"
-                  required
                   className="input"
-                  placeholder="https://..."
+                  placeholder="Opcional: https://..."
                   value={pasteForm.url}
                   onChange={(e) => setPasteForm({ ...pasteForm, url: e.target.value })}
                 />
@@ -509,8 +533,11 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
               >
                 Cancelar
               </button>
-              <button type="submit" className="btnGhost" disabled={savingPaste}>
+              <button type="submit" value="add" className="btnSubtle" disabled={savingPaste}>
                 {savingPaste ? 'Salvando...' : 'Adicionar Vaga'}
+              </button>
+              <button type="submit" value="adapt" className={`btnGhost ${styles.primaryButton}`} disabled={savingPaste}>
+                Adicionar e Adaptar Currículo
               </button>
             </div>
           </form>

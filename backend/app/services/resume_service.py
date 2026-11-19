@@ -36,7 +36,7 @@ from app.models import (
     ResumeVersion,
 )
 from app.models.profile_schema import StrictModel
-from app.services.discovery_service import load_domain_configs
+from app.services.discovery_service import AssistedJobImportRequest, import_assisted_job, load_domain_configs
 
 
 class PdfRendererProtocol(Protocol):
@@ -70,6 +70,8 @@ class ResumeExportPdfRequest(StrictModel):
     draft: ResumeDraft
     opportunity_id: str | None = None
     auto_fit: bool = True
+    manual_job_description: str = Field(default="", max_length=100000)
+    manual_job_url: str = Field(default="", max_length=1000)
 
 
 def _utc_now() -> str:
@@ -250,6 +252,19 @@ async def export_validated_pdf(
             f"Falha na validação ATS do PDF ({failed}): páginas={validation.page_count}/{validation.max_pages}"
         )
 
+    if opp is None and req.manual_job_description.strip():
+        imported = import_assisted_job(
+            session,
+            settings,
+            AssistedJobImportRequest(
+                url=req.manual_job_url,
+                title=current_draft.target_role,
+                company=current_draft.company,
+                description=req.manual_job_description,
+            ),
+        )
+        opp = session.get(JobOpportunity, imported["opportunity_id"])
+
     now_iso = _utc_now()
     version_id = str(uuid4())
     effective_company = opp.company if opp else current_draft.company
@@ -353,6 +368,8 @@ async def export_validated_pdf(
 
     return {
         "version_id": version_id,
+        "opportunity_id": opp.id if opp else None,
+        "job_url": opp.original_url if opp else None,
         "generation_mode": "ai",
         "export_rel_path": export_rel,
         "output_pdf_filename": download_filename,
