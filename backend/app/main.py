@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import time
-
 import json
 import shutil
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator

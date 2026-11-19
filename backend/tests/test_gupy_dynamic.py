@@ -11,7 +11,6 @@ from sqlmodel import Session
 
 from app.api.jobs_routes import build_source_label
 from app.connectors.sources import GupyApiConnector
-from app.core.config import AppSettings
 from app.core.database import create_sqlite_wal_engine, init_db_schema
 from app.domain.triage_engine import DeterministicTriageEngine, RawJobInput
 from app.models import BlockedCompaniesConfig, MasterProfile, SearchCriteria
