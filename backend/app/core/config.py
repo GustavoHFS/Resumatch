@@ -59,7 +59,7 @@ class AppSettings(BaseSettings):
     max_config_backups: int = 10
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    gemini_fallback_model: str = "gemini-2.0-flash"
+    gemini_fallback_model: str = "gemini-2.5-flash-lite"
 
     @property
     def ai_connected(self) -> bool:

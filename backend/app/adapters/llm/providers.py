@@ -1,7 +1,7 @@
 """Exclusive Google Gemini async adapter (`GeminiAdapter`) via lightweight `httpx`.
 
 - Zero heavy vendor SDKs; uses OS truststore TLS, header-only secret hygiene (`x-goog-api-key`),
-  and automatic fallback from `gemini-2.5-flash` to `gemini-2.0-flash` if needed.
+  and automatic fallback across 2.5 Flash, Flash Lite and Flash Latest.
 - Supports real-time zero-cost key validation (`validate_connection`), block-aware Base Resume
   extraction (`extract_profile_from_text`), and tailored resume generation (`generate_tailored_resume`).
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 import httpx
 import truststore
@@ -339,9 +339,10 @@ class GeminiAdapter:
         self,
         api_key: str,
         model: str = "gemini-2.5-flash",
-        fallback_model: str = "gemini-2.0-flash",
+        fallback_model: str = "gemini-2.5-flash-lite",
         timeout_seconds: float = 25.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        on_model_selected: Callable[[str], None] | None = None,
     ) -> None:
         if not api_key.strip():
             raise LlmAdapterError(
@@ -352,10 +353,34 @@ class GeminiAdapter:
         self._fallback_model = fallback_model
         self._timeout = timeout_seconds
         self._transport = transport
+        self._on_model_selected = on_model_selected
+
+    def _models_to_try(self) -> list[str]:
+        return list(dict.fromkeys([
+            self.model_name, "gemini-2.5-flash", self._fallback_model,
+            "gemini-2.5-flash-lite", "gemini-flash-latest",
+        ]))
+
+    def _remember_model(self, model: str) -> None:
+        self.model_name = model
+        if self._on_model_selected is not None:
+            self._on_model_selected(model)
+
+    def _google_error(self, response: httpx.Response) -> LlmAdapterError:
+        try:
+            payload = response.json()
+            message = payload.get("error", {}).get("message", "")
+        except (ValueError, AttributeError, TypeError):
+            message = ""
+        if not isinstance(message, str):
+            message = ""
+        safe = message.replace(self._api_key, "[CHAVE OCULTA]").strip()[:500]
+        suffix = f" Detalhes do Google: {safe}" if safe else ""
+        return LlmAdapterError(f"Não foi possível acessar o Google (HTTP {response.status_code}).{suffix}")
 
     async def validate_connection(self) -> str:
         """Validates the Google AI Studio key in real time with zero token cost."""
-        models_to_try = list(dict.fromkeys([self.model_name, self._fallback_model]))
+        models_to_try = self._models_to_try()
         async with _make_http_client(min(8.0, self._timeout), self._transport) as client:
             last_status = 0
             for candidate_model in models_to_try:
@@ -369,18 +394,17 @@ class GeminiAdapter:
 
                 last_status = res.status_code
                 if res.status_code == 200:
+                    self._remember_model(candidate_model)
                     return candidate_model
                 if res.status_code in {400, 401, 403}:
-                    raise LlmAdapterError(
-                        "Chave do Google inválida. Copie a chave completa gerada no Google AI Studio."
-                    )
+                    raise self._google_error(res)
 
-        raise LlmAdapterError(f"Serviço do Google retornou código {last_status} ao validar a chave.")
+        raise self._google_error(res)
 
     async def _call_structured(
         self, sys_prompt: str, user_text: str, schema: dict[str, Any]
     ) -> LlmJsonCallResult:
-        models_to_try = list(dict.fromkeys([self.model_name, self._fallback_model]))
+        models_to_try = self._models_to_try()
         body = {
             "systemInstruction": {"parts": [{"text": sys_prompt}]},
             "contents": [{"role": "user", "parts": [{"text": user_text}]}],
@@ -400,7 +424,7 @@ class GeminiAdapter:
                 used_model = candidate_model
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
 
-                # Up to 2 attempts on primary model for transient 429/503, then automatic fallback to gemini-2.0-flash!
+                # Retry the primary model for transient 429/503 before trying the next model.
                 max_attempts = 2 if idx == 0 else 1
                 for attempt in range(max_attempts):
                     try:
@@ -429,13 +453,13 @@ class GeminiAdapter:
 
         assert res is not None
         if res.status_code in {400, 401, 403}:
-            raise LlmAdapterError("Chave do Google inválida ou sem permissão. Reconecte nas Configurações.")
+            raise self._google_error(res)
         if res.status_code == 429:
-            raise LlmAdapterError("Limite temporário gratuito do Google atingido. Aguarde alguns segundos.")
+            raise self._google_error(res)
         if res.status_code == 503:
             raise LlmAdapterError("O servidor do Google está temporariamente sobrecarregado. Tente novamente em instantes.")
         if res.status_code != 200:
-            raise LlmAdapterError(f"A API do Google retornou erro HTTP {res.status_code}.")
+            raise self._google_error(res)
 
         data = res.json()
         try:
@@ -456,6 +480,7 @@ class GeminiAdapter:
             completion_tokens=int(usage_meta.get("candidatesTokenCount") or 0),
             total_tokens=int(usage_meta.get("totalTokenCount") or 0),
         )
+        self._remember_model(used_model)
         return LlmJsonCallResult(
             provider="gemini",
             model=used_model,
@@ -484,4 +509,5 @@ def build_llm_adapter(
         fallback_model=settings.gemini_fallback_model,
         timeout_seconds=settings.llm_timeout_seconds,
         transport=transport,
+        on_model_selected=lambda model: setattr(settings, "gemini_model", model),
     )

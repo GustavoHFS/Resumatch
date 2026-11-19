@@ -234,12 +234,12 @@ class TestPIIStripperAndLlmProvidersV2:
             await gem_err.generate_tailored_resume(ctx.sanitized)
         assert fake_gem_key not in str(exc_info.value)
 
-        # Verify automatic retry + fallback to gemini-2.0-flash when gemini-2.5-flash returns 429 or 503
+        # Verify retry + fallback to Flash Lite when Flash returns 429 or 503.
         called_models: list[str] = []
 
         def fallback_429_handler(req: httpx.Request) -> httpx.Response:
             called_models.append(str(req.url))
-            if "gemini-2.5-flash" in str(req.url):
+            if "gemini-2.5-flash:" in str(req.url):
                 return httpx.Response(503, text="overloaded")
             return httpx.Response(
                 200,
@@ -258,9 +258,9 @@ class TestPIIStripperAndLlmProvidersV2:
             transport=httpx.MockTransport(fallback_429_handler),
         )
         fb_res = await gem_fallback.generate_tailored_resume(ctx.sanitized)
-        assert fb_res.model == "gemini-2.0-flash"
+        assert fb_res.model == "gemini-2.5-flash-lite"
         assert any("gemini-2.5-flash" in u for u in called_models)
-        assert any("gemini-2.0-flash" in u for u in called_models)
+        assert any("gemini-2.5-flash-lite" in u for u in called_models)
 
 
 class TestResumeGenerateProfileImportAndKanban:
