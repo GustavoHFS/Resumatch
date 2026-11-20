@@ -53,6 +53,10 @@ FORBIDDEN_FILENAMES = {
     "AGENTS.md",
 }
 
+# Editable installs generate copies of public credits/README under these directories.
+# Skip only untracked build metadata; Git-tracked/staged copies are blocked below.
+GENERATED_METADATA_SUFFIXES = (".egg-info", ".dist-info")
+
 # Public credit is a narrow exception, never an exemption for contact details.
 PUBLIC_AUTHOR_SHORT = "Gustavo" + " Henrique"
 PUBLIC_AUTHOR = PUBLIC_AUTHOR_SHORT + " Francisco da Silva"
@@ -235,6 +239,12 @@ def check_path_policy(rel_path: Path) -> list[Violation]:
     posix = rel_path.as_posix()
     parts = rel_path.parts
 
+    if any(part.endswith(GENERATED_METADATA_SUFFIXES) for part in parts):
+        violations.append(
+            Violation(posix, None, "FORBIDDEN_GENERATED_METADATA",
+                      "Generated package metadata must never be tracked")
+        )
+
     if parts and parts[0] == "user_data":
         violations.append(
             Violation(posix, None, "FORBIDDEN_PRIVATE_PATH", "Files inside user_data/ must never be tracked")
@@ -350,8 +360,8 @@ def collect_workspace_files(repo_root: Path) -> list[Path]:
     collected: list[Path] = []
     for current_root, dirs, files in os.walk(repo_root):
         rel_dir = Path(current_root).relative_to(repo_root)
-        # Keep user_data/.gitkeep visible, skip everything else in IGNORED_DIRS
-        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS
+                   and not d.endswith(GENERATED_METADATA_SUFFIXES)]
         for filename in files:
             rel_file = rel_dir / filename if rel_dir != Path(".") else Path(filename)
             if rel_dir == Path(".") and filename.lower().endswith(".exe"):
