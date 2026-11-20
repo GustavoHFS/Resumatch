@@ -1,3 +1,3 @@
 # A única lista de dependências de produção fica em pyproject.toml.
-# Execute a instalação na raiz do projeto (como faz setup.bat).
+# Execute a instalação na raiz do projeto (como faz Instalar.bat).
 -e .

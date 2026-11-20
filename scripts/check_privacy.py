@@ -56,6 +56,10 @@ FORBIDDEN_FILENAMES = {
 # Public credit is a narrow exception, never an exemption for contact details.
 PUBLIC_AUTHOR_SHORT = "Gustavo" + " Henrique"
 PUBLIC_AUTHOR = PUBLIC_AUTHOR_SHORT + " Francisco da Silva"
+PUBLIC_REPOSITORY = "https://github.com/" + "GustavoHFS/Resumatch"
+PUBLIC_REPOSITORY_PATTERN = re.compile(
+    re.escape(PUBLIC_REPOSITORY) + r"(?=[/?#\s<>\)\"']|$)", re.IGNORECASE
+)
 AUTHOR_CREDIT_FILES = {
     "LICENSE", "README.md", "pyproject.toml", "frontend/package.json",
     "frontend/src/components/SettingsDrawer.tsx", "scripts/build_launcher_exe.py",
@@ -315,6 +319,9 @@ def scan_file_contents(
                 secret.category == "PRIVATE_CANDIDATE_NAME"
                 and secret.value.casefold() in {PUBLIC_AUTHOR.casefold(), PUBLIC_AUTHOR_SHORT.casefold()}
             ) else lowered
+            if secret.category == "PRIVATE_PROFILE_LINK" and is_author_credit_path(rel_path):
+                # The exact project's URL is public, not the standalone personal profile.
+                searchable = PUBLIC_REPOSITORY_PATTERN.sub("[PUBLIC_REPOSITORY]", searchable)
             if secret.value.casefold() in searchable:
                 violations.append(
                     Violation(

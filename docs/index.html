@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Resumatch: organize vagas de início de carreira em TI, prepare currículos A4 e mantenha o controle dos seus dados. Experimente a demonstração interativa.">
+  <meta name="color-scheme" content="dark">
+  <title>Resumatch — cada candidatura com intenção</title>
+  <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#simulador">Pular para a demonstração</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#"><img src="assets/logo.svg" width="32" height="32" alt="">Resumatch</a>
+    <nav aria-label="Links do projeto"><a href="#historia">A ideia</a><a href="#privacidade">Privacidade</a><a href="https://github.com/GustavoHFS/Resumatch">GitHub ↗</a></nav>
+  </header>
+  <main>
+    <section class="hero wrap">
+      <div class="eyebrow"><span class="dot"></span> LOCAL-FIRST · OPEN SOURCE · FEITO PARA COMEÇAR</div>
+      <h1>Seu próximo passo.<br><span>Não mais uma aba aberta.</span></h1>
+      <p>Encontre vagas de entrada em Tecnologia, organize candidaturas e transforme sua experiência real em um currículo A4 claro. Com IA responsável. Com você no controle.</p>
+      <div class="actions"><a class="button primary" href="#simulador">Experimentar sem instalar ↓</a><a class="button" href="https://github.com/GustavoHFS/Resumatch/releases/latest/download/Resumatch-Windows.zip">Baixar para Windows ↗</a></div>
+      <p class="fine">Gratuito e MIT. Python 3.12+ na instalação. Interface pronta: sem Node.js na Release.</p>
+      <div class="hero-flow" aria-label="Fluxo do Resumatch"><span>01 <b>Descubra</b></span><i>→</i><span>02 <b>Organize</b></span><i>→</i><span>03 <b>Adapte</b></span><i>→</i><span>04 <b>Revise e envie</b></span></div>
+    </section>
+    <section class="wrap intro" id="historia"><div><div class="eyebrow">UMA NECESSIDADE REAL</div><h2>Buscar trabalho já dá trabalho.</h2></div><p>Este projeto surgiu do uso próprio: centralizar vagas para <strong>iniciantes, estágios e posições júnior em Tecnologia</strong>. Menos anúncios repetidos e cargos fora do foco. Mais clareza para escolher onde investir tempo — e adaptar o currículo com responsabilidade via IA gratuita, sem inventar experiência.</p></section>
+    <section class="wrap demo-section" id="simulador" aria-labelledby="demo-title">
+      <div class="section-heading"><div><div class="eyebrow">EXPERIMENTE O FLUXO COMPLETO</div><h2 id="demo-title">Um pequeno estúdio. Seu próximo grande passo.</h2></div><span class="pill">DEMO · DADOS FICTÍCIOS</span></div>
+      <p class="muted">Salve uma vaga, abra o cartão no Estúdio e teste a folha A4. Nada é enviado ou salvo em servidor.</p>
+      <div class="app-shell">
+        <div class="app-topbar"><span class="brand"><img src="assets/logo.svg" width="25" height="25" alt="">Resumatch</span><nav role="tablist" aria-label="Simulador Resumatch"><button id="tab-jobs" role="tab" aria-controls="panel-jobs" aria-selected="true" data-tab="jobs">Vagas</button><button id="tab-applications" role="tab" aria-controls="panel-applications" aria-selected="false" tabindex="-1" data-tab="applications">Candidaturas <span id="saved-count">0</span></button><button id="tab-studio" role="tab" aria-controls="panel-studio" aria-selected="false" tabindex="-1" data-tab="studio">Estúdio A4</button><button id="tab-profile" role="tab" aria-controls="panel-profile" aria-selected="false" tabindex="-1" data-tab="profile">Currículo Base</button></nav></div>
+        <div class="demo-content">
+          <section id="panel-jobs" role="tabpanel" aria-labelledby="tab-jobs">
+            <div class="toolbar"><label class="search-label">Buscar vaga<input id="search" type="search" placeholder="Cargo, empresa ou tecnologia..."></label><label>Nível<select id="level"><option value="">Todos os níveis</option><option>Estágio</option><option>Júnior</option></select></label><label>Fonte<select id="source"><option value="">Todas as fontes</option><option>Gupy</option><option>LinkedIn</option><option>GitHub</option></select></label><button id="clear-filters" class="button">Limpar filtros</button></div>
+            <div class="jobs-layout"><div id="job-list" class="job-list" aria-label="Vagas fictícias"></div><article id="job-detail" class="job-detail"></article></div>
+          </section>
+          <section id="panel-applications" role="tabpanel" aria-labelledby="tab-applications" hidden><div class="board" id="board"></div></section>
+          <section id="panel-studio" role="tabpanel" aria-labelledby="tab-studio" hidden>
+            <div class="studio-layout"><div class="studio-controls"><h3>Adaptar currículo</h3><label>Vaga selecionada<select id="studio-job"><option value="">Colar descrição avulsa abaixo</option></select></label><label>Descrição da vaga<textarea id="description" rows="5" placeholder="Cole uma descrição fictícia para experimentar."></textarea></label><label>Fonte<select id="font"><option>Libre Franklin</option><option>Inter</option><option>Times New Roman</option></select></label><button id="adapt" class="button primary">Adaptar demonstração ✨</button><p class="fine">Simulação determinística: nenhuma chamada ao Gemini. Revise sempre o documento no aplicativo real.</p><div class="privacy-card"><div class="eyebrow">ANTES DE ENVIAR À IA</div><h4>Identidade fica do seu lado.</h4><button id="mask" class="button" aria-pressed="false">Ver texto mascarado</button><pre id="privacy-preview">Candidata Exemplo<br>candidata@example.com<br>(00) 90000-0000</pre><p class="fine">Ilustração do PIIStripper, não o payload real da API.</p></div></div>
+            <div class="paper-stage"><div class="paper-toolbar"><span>FOLHA A4 · PRÉVIA DEMONSTRATIVA</span><button id="demo-pdf" class="button">Simular PDF pronto ↓</button></div><div class="paper-scroll"><article class="paper" id="paper" aria-label="Prévia de currículo A4"><header><h2>Candidata Exemplo</h2><p>candidata@example.com · (00) 90000-0000</p><h3 id="target-role">Estágio em Tecnologia</h3></header><section><h4>Resumo profissional</h4><p id="resume-summary">Estudante de Sistemas de Informação com prática acadêmica em Python, SQL e suporte técnico. Interesse em oportunidades de início de carreira.</p></section><section><h4>Projetos acadêmicos</h4><b>Organizador de chamados · 2026</b><ul><li>Desenvolvimento de uma API de estudos para registrar e consultar chamados.</li><li>Consultas SQL para organizar registros e acompanhar atendimentos.</li><li>Documentação de instalação e testes das funcionalidades.</li></ul></section><section><h4>Formação acadêmica</h4><b>Sistemas de Informação</b><p>Instituição de Ensino Exemplo · Em andamento</p></section><section><h4>Competências técnicas</h4><p>Python · SQL · Git · APIs REST · Windows · Suporte técnico</p></section><section><h4>Idiomas</h4><p>Português — Nativo<br>Inglês — Leitura técnica básica</p></section></article></div></div></div>
+          </section>
+          <section id="panel-profile" role="tabpanel" aria-labelledby="tab-profile" hidden><div class="profile-layout"><div><div class="eyebrow">UMA BASE, MUITAS POSSIBILIDADES</div><h3>Experiência real.<br>Não uma pessoa inventada pela IA.</h3><p class="muted">No aplicativo, você importa PDF/DOCX ou edita seu histórico. Nesta vitrine, todos os dados são fictícios e se perdem ao recarregar a página.</p></div><div class="profile-card"><h4>Candidata Exemplo</h4><p>Estudante de Sistemas de Informação</p><hr><h4>Projetos e competências</h4><p>Organizador acadêmico de chamados, Python, SQL e Git.</p><h4>O compromisso</h4><p>Adaptar a linguagem e a ordem das seções. Nunca inventar cargos, experiências, ferramentas ou certificações.</p></div></div></section>
+        </div><div class="app-status" id="status" role="status" aria-live="polite">01 · Escolha uma vaga e salve em Candidaturas.</div>
+      </div>
+      <noscript><p>Ative JavaScript para usar o simulador. O aplicativo para Windows está disponível nas Releases.</p></noscript>
+    </section>
+    <section class="wrap privacy-section" id="privacidade"><div><div class="eyebrow">PRIVACIDADE POR DESIGN</div><h2>Seu histórico é seu.<br>A IA não precisa do seu telefone.</h2><p class="muted">Perfil e PDFs ficam no seu computador. O PIIStripper prepara o texto antes da chamada externa e os identificadores são restaurados localmente. Revise textos livres: mascaramento não é garantia absoluta de anonimato.</p></div><ol class="privacy-flow"><li><span>01 · NO SEU COMPUTADOR</span><b>Currículo Base</b><small>Perfil, contatos e experiências</small></li><li><span>02 · BARREIRA LOCAL</span><b>PIIStripper → placeholders</b><small>[NOME_CANDIDATO] · [EMAIL] · [TELEFONE]</small></li><li><span>03 · SOMENTE TEXTO MASCARADO</span><b>Google Gemini → rascunho</b><small>Reidratação e revisão humana no seu computador</small></li></ol></section>
+    <section class="wrap closing"><img src="assets/logo.svg" width="54" height="54" alt=""><h2>Organize a busca.<br>Cuide da sua próxima oportunidade.</h2><a class="button primary" href="https://github.com/GustavoHFS/Resumatch/releases">Ver Releases para Windows ↗</a><p class="fine">IA opcional com chave própria e cotas gratuitas do Google. Envio de candidaturas sempre manual.</p></section>
+  </main>
+  <footer class="site-footer wrap"><span>Resumatch • Desenvolvido por Gustavo Henrique Francisco da Silva</span><a href="https://github.com/GustavoHFS/Resumatch/blob/main/LICENSE">MIT © 2026</a><span>Sem analytics. Sem backend nesta demo.</span></footer>
+</body>
+</html>

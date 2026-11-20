@@ -1,40 +1,124 @@
-﻿# Resumatch
+<div align="center">
+<img src="docs/assets/logo.svg" width="88" alt="Logo Resumatch">
 
-Aplicativo local para descobrir vagas de TI, adaptar currículos A4 com revisão humana e acompanhar candidaturas. Os dados pessoais, o banco SQLite, as chaves e os PDFs permanecem em `user_data/` — nunca são enviados ao Git.
+# Resumatch
 
-## Instalação em um passo (Windows)
+**Menos ruído na busca. Mais intenção em cada candidatura.**
 
-1. Instale Python 3.12+, Node.js 20+ (com npm) e o .NET Framework 4.x com compilador `csc.exe`.
-2. Dê duplo clique em **`Instalar.bat`** na raiz do projeto.
-3. Abra **`Resumatch.exe`**. O Resumatch inicia o servidor local e abre o navegador padrão em `http://127.0.0.1:8000/` (ou na próxima porta disponível).
+Estúdio local de vagas de Tecnologia, currículos A4 e acompanhamento de candidaturas.
 
-O instalador cria `.venv`, instala `backend/requirements.txt` (que referencia o `pyproject.toml`), instala o Chromium headless do Playwright, executa `npm install` e `npm run build` em `frontend/`, e compila o launcher nativo. É seguro repetir o comando: não apaga nem substitui arquivos em `user_data/`. É necessário acesso à internet na primeira instalação.
+[![CI](https://github.com/GustavoHFS/Resumatch/actions/workflows/ci-and-release.yml/badge.svg)](https://github.com/GustavoHFS/Resumatch/actions)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![React](https://img.shields.io/badge/React-TypeScript-3178C6?logo=react)](frontend/)
+[![MIT](https://img.shields.io/badge/Licença-MIT-eeeeee)](LICENSE)
+[![Local first](https://img.shields.io/badge/Dados-local--first-262626)](#privacidade)
 
-## Primeiro arranque e dados
+[**Experimentar a demonstração →**](https://gustavohfs.github.io/Resumatch/) · [**Baixar para Windows ↓**](https://github.com/GustavoHFS/Resumatch/releases/latest/download/Resumatch-Windows.zip)
+</div>
 
-Se `user_data/` não existir, o backend cria `config/`, `profile/`, `db/` e `exports/` a partir dos exemplos **vazios** em `examples/`. Complete o Currículo Base e configure suas cidades e empresas bloqueadas no aplicativo. Se algum arquivo local já existir, o bootstrap não o sobrescreve. Nunca use os exemplos de testes (`backend/tests/fixtures/`) como dados pessoais.
+## Por que este projeto existe?
 
-## Estrutura
+O Resumatch nasceu de uma **necessidade real de uso próprio**: centralizar a busca por vagas para **iniciantes, estágios e posições júnior na área de Tecnologia**. Entre portais com anúncios repetidos, cargos fora do foco e muitas versões de currículo, faltava um fluxo simples para organizar oportunidades e preparar uma candidatura por vez.
 
-```text
-backend/app/       API, domínio, conectores, serviços e templates
-backend/tests/     testes e fixtures sintéticas isoladas
-backend/requirements.txt  instalação Python (dependências no pyproject.toml)
-frontend/src/      React, TypeScript e CSS local
-examples/          exemplos iniciais sem perfil ou bloqueios
-scripts/           launcher, privacidade e migrações opcionais
-Instalar.bat       instalação Windows em um passo
-user_data/         dados locais ignorados pelo Git
-Resumatch.exe      launcher gerado e ignorado pelo Git
+A proposta é eliminar ruído dos portais e adaptar o currículo com responsabilidade usando a faixa gratuita do Google Gemini — sujeita à disponibilidade e às cotas do Google. A IA ajuda a organizar fatos reais, não a inventar qualificações. A revisão e o envio continuam sendo seus.
+
+## Comece em 2 passos — Windows
+
+**Pré-requisito:** Python 3.12+ instalado com “Add Python to PATH” e internet na primeira instalação. O launcher usa .NET Framework 4.x, normalmente presente no Windows.
+
+1. **[Baixe o ZIP da Release](https://github.com/GustavoHFS/Resumatch/releases/latest), extraia tudo e abra `Instalar.bat`.** Aguarde a instalação do ambiente Python e do Chromium para PDF. A Release contém a interface pré-compilada: **não precisa de Node.js**.
+2. **Abra `Resumatch.exe`.** Preencha ou importe seu Currículo Base, configure seus critérios e conecte uma chave do [Google AI Studio](https://aistudio.google.com/) se quiser adaptar com IA.
+
+> O ZIP estará disponível após a primeira tag `v*` gerar uma Release com sucesso. Não execute dentro do ZIP. Para atualizar, feche o app, preserve `user_data/` e extraia os arquivos públicos na mesma pasta. O instalador não apaga seus dados.
+
+## Um fluxo, quatro abas
+
+| Aba | O que você faz |
+| --- | --- |
+| **Vagas** | Busca, filtra ou cola anúncios. Inclui descartadas e fora do foco, respeitando os filtros e a ordem cronológica. |
+| **Candidaturas** | Salva o que interessa em **A preparar** e abre o cartão diretamente no Estúdio. |
+| **Estúdio** | Seleciona exclusivamente candidaturas salvas ou cola uma descrição avulsa. Adapta, revisa, troca a fonte e exporta em A4. |
+| **Currículo Base** | Mantém um histórico único e verdadeiro, com importação de PDF/DOCX e edição local. |
+
+**Adaptar no Estúdio** salva a vaga antes de abrir o editor. Exportar um PDF validado vincula a versão ao cartão e muda **A preparar → Currículo pronto**. Um rascunho de IA sozinho não é um PDF pronto. Marcar “Enviada” exige confirmação manual.
+
+## Arquitetura
+
+```mermaid
+flowchart LR
+    PORTAIS["Fontes públicas HTTPS"] --> TRI["Triagem e deduplicação"]
+    TRI --> DB[("SQLite WAL local")]
+    DB --> K["Candidaturas salvas"]
+    BASE["Currículo Base JSON"] --> P["PIIStripper local"]
+    K --> P
+    P -->|"Texto mascarado"| G["Google Gemini 2.5 Flash + fallback"]
+    G --> R["Reidratação local + revisão humana"]
+    R --> A["HTML semântico A4 / Chromium"]
+    A --> PDF["pypdf: validação ATS + SHA-256"]
+    PDF --> K
+    UI["React + TypeScript"] <--> API["FastAPI / SQLModel"]
+    API <--> DB
 ```
 
-## Desenvolvimento e verificação
+**Stack:** Python, FastAPI, Pydantic v2, SQLModel, SQLite WAL, httpx/truststore, selectolax, APScheduler, React 18, TypeScript, Vite, CSS Modules, Jinja2, Playwright e pypdf. O launcher C# abre o navegador padrão sem terminal. O Gemini usa HTTP leve, sem SDK pesado, com fallback `gemini-2.5-flash → gemini-2.5-flash-lite → gemini-flash-latest` em caso de modelo indisponível.
+
+## Privacidade
+
+- **Dados no disco local:** perfil, SQLite, configurações, chave, backups e PDFs ficam em `user_data/`, ignorado integralmente pelo Git. Nunca publique essa pasta nem `.env`.
+- **`PIIStripper`:** separa contatos e substitui identificadores por placeholders antes da IA. Empregadores/instituições usam tokens como `[[EMP_1]]` e `[[INST_1]]`; a reidratação ocorre localmente. A vitrine ilustra o conceito com `[NOME_CANDIDATO]`, `[EMAIL]` e `[TELEFONE]`.
+- **Há comunicação externa:** a busca acessa portais públicos; o Gemini recebe conteúdo mascarado. Revise descrições livres para remover informações confidenciais não reconhecidas. Não há garantia de anonimização absoluta. Consulte os termos do Google para uso dos dados na faixa gratuita.
+- **Barreira de publicação:** `scripts/check_privacy.py` bloqueia contatos, segredos, documentos, bancos e fingerprints locais. O nome público do autor é permitido apenas nos arquivos de crédito autorizados — não libera telefone, endereço ou e-mail.
+- **Sem candidatura automática:** nada de preencher formulários ou enviar currículos em massa. Portais podem exigir login e confirmação manual.
+
+O primeiro arranque usa **exemplos vazios** em `examples/`. Dados sintéticos ficam somente nos testes e na [vitrine estática](docs/), que não chama o backend nem o Gemini e não usa analytics.
+
+## Desenvolvimento
+
+Para compilar do código-fonte, instale também Node.js 22+ e execute `Instalar.bat`. Para testes:
 
 ```powershell
-.venv\Scripts\python.exe scripts\start_app.py
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python -m playwright install chromium-headless-shell
+npm --prefix frontend ci
 npm --prefix frontend run build
 .venv\Scripts\pytest -v
-.venv\Scripts\python.exe scripts\check_privacy.py
+.venv\Scripts\python scripts/check_privacy.py
 ```
 
-A busca usa fontes públicas; disponibilidade e resultados variam por data e localização. A integração com Google Gemini é opcional e mascara contatos antes de enviar texto à IA. O envio de candidaturas permanece manual.
+Opcional: instale a proteção de commit com `.venv\Scripts\python scripts/install_hooks.py`. Para iniciar por terminal: `.venv\Scripts\python scripts/start_app.py`. A API local fica em `/docs`. Feche o aplicativo antes de atualizar arquivos ou executar manutenção.
+
+### Docker
+
+```sh
+docker compose -f infra/docker-compose.yml up --build
+```
+
+Acesse `http://localhost:8000`. O volume aponta para `./user_data` na raiz. Para encerrar: `docker compose -f infra/docker-compose.yml down`. Não remova dados/volumes privados. `infra/Dockerfile.dockerignore` protege o contexto raiz durante o build.
+
+### Estrutura
+
+```text
+Instalar.bat           instalação guiada para Windows
+assets/               ícone do launcher
+backend/app/          API, domínio, IA, privacidade e PDF A4
+backend/tests/        testes isolados e dados sintéticos
+frontend/             interface React/TypeScript
+examples/             configurações iniciais vazias
+infra/                Dockerfile, Compose e regras de isolamento
+scripts/              launcher, scanner e pacote de Release
+docs/                 demonstração autocontida para GitHub Pages
+.github/workflows/    CI e Release por tags v*
+user_data/            PRIVADO, nunca versionado
+Resumatch.exe         gerado localmente, nunca versionado
+```
+
+## CI, Releases e GitHub Pages
+
+Pushes e PRs em `main` verificam privacidade, testes e build da interface no Windows. Publicar uma tag como `v2.2.1` executa os mesmos gates, compila o launcher e cria `Resumatch-Windows.zip` usando somente arquivos públicos permitidos e a interface compilada. Nenhum dado local é empacotado.
+
+Para publicar a vitrine: **Settings → Pages → Deploy from a branch → `main` → `/docs`**. Ela funciona também abrindo `docs/index.html` diretamente, sem servidor. As fontes e o logo são locais. As ações não alteram automaticamente a configuração de Pages da conta.
+
+## Autoria e licença
+
+Desenvolvido por **Gustavo Henrique Francisco da Silva**. [Licença MIT](LICENSE), Copyright © 2026. As fontes incluídas preservam sua [licença SIL Open Font License](docs/assets/fonts/LICENSE-OFL.txt).
