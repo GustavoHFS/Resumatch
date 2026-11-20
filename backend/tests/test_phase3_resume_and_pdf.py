@@ -169,7 +169,7 @@ class TestPlaywrightPdfLifecycleAutoFitAndDraftExport:
             assert len(html_str) < 15_000
             assert "fonts.googleapis.com" not in html_str
             assert 'id="resume-flow"' in html_str
-            assert "Desenvolvedora Backend Java" in html_str
+            assert 'class="target-role-line"' not in html_str
             assert 'href="mailto:marina.costa@example.com"' in html_str
             assert "RESUMO PROFISSIONAL" in html_str
             assert "CURSOS E CERTIFICAÇÕES" in html_str
@@ -288,11 +288,11 @@ class TestPlaywrightPdfLifecycleAutoFitAndDraftExport:
                 "/api/resumes/export-pdf",
                 json={"draft": verbose_draft.model_dump(mode="json"), "auto_fit": True},
             )
-            assert autofit_res.status_code == 200, autofit_res.text
-            af_body = autofit_res.json()
-            assert af_body["ats_validation"]["passed"] is True
-            assert af_body["ats_validation"]["page_count"] == 1
-            assert af_body["draft"]["compact_mode"] is True
+            # Excessive content is not silently dropped to manufacture a one-page PDF.
+            assert autofit_res.status_code == 422, autofit_res.text
+            assert "Nenhum conteúdo foi removido" in autofit_res.json()["detail"]
+            assert len(verbose_draft.courses) == 6
+            assert len(verbose_draft.experiences[0].highlights) == 9
             assert app.state.pdf_browser_manager.launch_count == 1
 
     @pytest.mark.anyio
@@ -353,4 +353,4 @@ class TestPlaywrightPdfLifecycleAutoFitAndDraftExport:
                 assert "eficiente" in extracted
                 assert "fluxo" in extracted
                 assert "identificação" in extracted
-                assert "Desenvolvedora Backend Java" in extracted
+                assert "Desenvolvedora Backend Java" not in extracted

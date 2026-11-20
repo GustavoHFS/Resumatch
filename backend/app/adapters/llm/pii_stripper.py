@@ -234,7 +234,7 @@ def strip_pii_for_resume_generation(
                 degree=masker.mask_text(edu.degree),
                 institution_token=masker.mask_text(edu.institution),
                 period=masker.mask_text(edu.period),
-                details=masker.mask_text(edu.details),
+                details="",
             )
             for edu in profile.education
         ],
@@ -327,16 +327,13 @@ def rehydrate_generated_draft(
         if isinstance(item, dict) and (_rh(item.get("role")) or _rh(item.get("company")))
     ]
 
+    # Academic facts and order belong to the candidate, never to the model.
     education = [
         DraftEducationItem(
-            id=str(item.get("id") or f"dedu_{idx}"),
-            degree=_rh(item.get("degree")) or "Formação",
-            institution=_rh(item.get("institution")),
-            period=_rh(item.get("period")),
-            details=_rh(item.get("details")),
+            id=item.id, degree=item.degree, institution=item.institution,
+            period=item.period,
         )
-        for idx, item in enumerate(proposal_dict.get("education") or [], start=1)
-        if isinstance(item, dict) and _rh(item.get("degree"))
+        for item in profile.education
     ]
 
     courses = [

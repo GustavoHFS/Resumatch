@@ -199,24 +199,8 @@ async def generate_ai_resume_draft(
 
 
 def _shrink_draft_for_budget(draft: ResumeDraft, attempt: int) -> ResumeDraft:
-    if attempt == 1:
-        return draft.model_copy(update={"compact_mode": True})
-    if attempt == 2:
-        trimmed_exps = [
-            exp.model_copy(update={"highlights": exp.highlights[:4]})
-            for exp in draft.experiences
-        ]
-        return draft.model_copy(update={"compact_mode": True, "experiences": trimmed_exps})
-    return draft.model_copy(
-        update={
-            "compact_mode": True,
-            "courses": draft.courses[:2],
-            "experiences": [
-                exp.model_copy(update={"highlights": exp.highlights[:3]})
-                for exp in draft.experiences
-            ],
-        }
-    )
+    """Adjust geometry only: never discard courses, bullets, or other facts."""
+    return draft.model_copy(update={"layout_step": min(3, attempt), "compact_mode": False})
 
 
 async def export_validated_pdf(
@@ -231,14 +215,15 @@ async def export_validated_pdf(
         if opp is None:
             raise LookupError(f"Vaga '{req.opportunity_id}' não encontrada.")
 
-    current_draft = req.draft
-    max_attempts = 4 if req.auto_fit else 1
+    current_draft = ResumeDraft.model_validate(req.draft.model_dump())
+    initial_step = max(current_draft.layout_step, 3 if current_draft.compact_mode else 0)
+    steps = list(range(initial_step, 4)) if req.auto_fit and current_draft.max_pages == 1 else [0]
     pdf_bytes = b""
     validation = None
 
-    for attempt in range(max_attempts):
-        if attempt > 0:
-            current_draft = _shrink_draft_for_budget(current_draft, attempt)
+    for step in steps:
+        if req.auto_fit:
+            current_draft = _shrink_draft_for_budget(current_draft, step)
         html = render_resume_a4_html(current_draft, standalone_preview=False)
         pdf_bytes = await pdf_renderer.render_html_to_pdf(html)
         validation = validate_ats_pdf(pdf_bytes, current_draft)
@@ -247,6 +232,11 @@ async def export_validated_pdf(
 
     assert validation is not None
     if not validation.passed:
+        if validation.page_count > current_draft.max_pages:
+            raise ValueError(
+                "O conteúdo excede o limite de páginas mesmo com margens mínimas legíveis de 9,5 mm. "
+                "Revise o texto ou selecione 2 páginas. Nenhum conteúdo foi removido nem PDF salvo."
+            )
         failed = [k for k, ok in validation.checks.items() if not ok]
         raise ValueError(
             f"Falha na validação ATS do PDF ({failed}): páginas={validation.page_count}/{validation.max_pages}"

@@ -54,6 +54,7 @@ export function isServerDisconnectedError(err: unknown): boolean {
 export function createEmptyMasterProfile(): MasterProfile {
   return {
     schema_version: '2.1',
+    education_order_manual: false,
     header: {
       full_name: '',
       email: '',
@@ -177,6 +178,7 @@ export function normalizeMasterProfile(raw: unknown): MasterProfile {
       age: typeof hdr.age === 'number' ? hdr.age : null,
       links,
     },
+    education_order_manual: Boolean(obj.education_order_manual),
     summary: String(obj.summary ?? ''),
     experiences,
     education,

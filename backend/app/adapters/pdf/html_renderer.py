@@ -14,6 +14,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.models.resume_schema import ResumeDraft, ResumeFontFamily
+from app.domain.resume_policy import LAYOUT_MARGINS_MM
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
 FONTS_DIR = TEMPLATES_DIR / "fonts"
@@ -101,6 +102,8 @@ def render_resume_a4_html(
     *,
     standalone_preview: bool = False,
 ) -> str:
+    # Also normalizes legacy/model_copy drafts without altering their manual order.
+    draft = ResumeDraft.model_validate(draft.model_dump())
     env, stylesheet_css, inline_by_family = _load_static_assets()
     template = env.get_template("resume_a4.html")
     font_stack = FONT_FAMILY_STACKS.get(draft.font_family, FONT_FAMILY_STACKS["Libre Franklin"])
@@ -109,10 +112,19 @@ def render_resume_a4_html(
         if standalone_preview
         else inline_by_family.get(draft.font_family, "")
     )
+    step = max(draft.layout_step, 3 if draft.compact_mode else 0) if draft.max_pages == 1 else 0
+    margin = LAYOUT_MARGINS_MM[step]
+    layout_css = (
+        f":root {{ --page-margin: {margin}mm; --body-leading: {1.42 - step * .02:.2f}; "
+        f"--section-gap: {8.5 - step * .8}pt; --entry-gap: {6 - step * .5}pt; "
+        f"--bullet-gap: {2 - step * .25}pt; }}\n"
+        f"@page {{ size: A4 portrait; margin: {margin}mm; }}"
+    )
     return template.render(
         payload=draft,
         font_face_css=font_face_css,
         stylesheet_css=stylesheet_css,
         font_stack=font_stack,
         standalone_preview=standalone_preview,
+        layout_css=layout_css,
     )

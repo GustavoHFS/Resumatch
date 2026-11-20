@@ -13,6 +13,7 @@ import {
 } from '../components/Icons';
 import type { ApplicationCard, JobListItem, ResumeDraft, ResumeFontFamily, SectionKind } from '../types/api';
 import styles from './ResumeStudioPage.module.css';
+import { EducationOrderButtons } from '../components/EducationOrderButtons';
 
 interface Props {
   active: boolean;
@@ -23,8 +24,7 @@ interface Props {
 }
 
 const A4_HEIGHT_PX = 1122.5;
-const PAGE_MARGIN_TOP_PX = 52.9; // 14mm at 96dpi
-const PRINTABLE_CONTENT_PER_PAGE_PX = 1016.7; // 269mm (297mm - 28mm @page margins)
+const PAGE_MARGINS_MM = [14, 12, 10.5, 9.5];
 
 const FONT_OPTIONS: Array<{ value: ResumeFontFamily; label: string }> = [
   { value: 'Libre Franklin', label: 'Libre Franklin (Padrão ATS)' },
@@ -270,31 +270,39 @@ export const ResumeStudioPage: React.FC<Props> = ({
     const doc = iframeRef.current?.contentDocument;
     if (!doc?.body) return;
     const measureOnce = () => {
+      if (iframeRef.current?.contentDocument !== doc) return;
       const flowNode = doc.getElementById('resume-flow');
       if (flowNode) {
         const flowH = Math.ceil(flowNode.getBoundingClientRect().height || flowNode.scrollHeight);
-        if (flowH > 40) setContentFlowPx(flowH);
-      } else {
-        const fallbackH = Math.max(100, doc.body.scrollHeight - PAGE_MARGIN_TOP_PX * 2);
-        setContentFlowPx(fallbackH);
+        if (flowH > 40) {
+          setContentFlowPx(flowH);
+          const step = draft?.layout_step ?? 0;
+          const margin = PAGE_MARGINS_MM[step] * 96 / 25.4;
+          if (draft?.max_pages === 1 && flowH > A4_HEIGHT_PX - margin * 2 && step < 3) {
+            setDraft((current) => current && current.layout_step === step
+              ? { ...current, layout_step: step + 1, compact_mode: false } : current);
+          }
+        }
       }
     };
     measureOnce();
     if ('fonts' in doc && doc.fonts?.ready) {
       doc.fonts.ready.then(measureOnce).catch(() => {});
     }
-  }, []);
+  }, [draft?.layout_step, draft?.max_pages]);
 
   const activeMaxPages = draft?.max_pages ?? maxPages;
-  const contentBudgetPx = activeMaxPages * PRINTABLE_CONTENT_PER_PAGE_PX;
-  const isOverflow = contentFlowPx > contentBudgetPx + 6;
-  const estimatedPages = Math.max(1, Math.ceil((contentFlowPx - 6) / PRINTABLE_CONTENT_PER_PAGE_PX));
+  const marginPx = PAGE_MARGINS_MM[activeMaxPages === 1 ? draft?.layout_step ?? 0 : 0] * 96 / 25.4;
+  const printableHeight = A4_HEIGHT_PX - marginPx * 2;
+  const contentBudgetPx = activeMaxPages * printableHeight;
+  const isOverflow = contentFlowPx > contentBudgetPx;
+  const estimatedPages = Math.max(1, Math.ceil(contentFlowPx / printableHeight));
   const visualSheetPages = Math.max(activeMaxPages, estimatedPages);
   const iframeHeight =
     visualSheetPages === 1
       ? A4_HEIGHT_PX
-      : Math.max(visualSheetPages * A4_HEIGHT_PX, contentFlowPx + PAGE_MARGIN_TOP_PX * 2 + 12);
-  const limitRuleTopPx = PAGE_MARGIN_TOP_PX + activeMaxPages * PRINTABLE_CONTENT_PER_PAGE_PX;
+      : Math.max(visualSheetPages * A4_HEIGHT_PX, contentFlowPx + marginPx * 2 + 12);
+  const limitRuleTopPx = marginPx + contentBudgetPx;
 
   return (
     <div className={styles.split}>
@@ -399,7 +407,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
                 onChange={(e) => {
                   const next = Number(e.target.value);
                   setMaxPages(next);
-                  if (draft) setDraft({ ...draft, max_pages: next });
+                  if (draft) setDraft({ ...draft, max_pages: next, layout_step: 0, compact_mode: false });
                 }}
               >
                 <option value={1}>1 página</option>
@@ -415,7 +423,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
                 onChange={(e) => {
                   const nextFont = e.target.value as ResumeFontFamily;
                   setFontFamily(nextFont);
-                  if (draft) setDraft({ ...draft, font_family: nextFont });
+                  if (draft) setDraft({ ...draft, font_family: nextFont, layout_step: 0, compact_mode: false });
                 }}
               >
                 {FONT_OPTIONS.map((f) => (
@@ -623,6 +631,8 @@ export const ResumeStudioPage: React.FC<Props> = ({
                     {secKind === 'summary' && (
                       <textarea
                         rows={4}
+                        maxLength={420}
+                        aria-label="Resumo profissional (até 420 caracteres)"
                         className="textarea"
                         value={draft.summary}
                         onChange={(e) => setDraft({ ...draft, summary: e.target.value })}
@@ -752,6 +762,11 @@ export const ResumeStudioPage: React.FC<Props> = ({
                       draft.education.map((edu, idx) => (
                         <div key={edu.id} className={styles.subBlock}>
                           <div className={styles.subHead}>
+                            <EducationOrderButtons index={idx} count={draft.education.length} onMove={(delta) => {
+                              const education = [...draft.education];
+                              [education[idx], education[idx + delta]] = [education[idx + delta], education[idx]];
+                              setDraft({ ...draft, education });
+                            }} />
                             <input
                               className="input"
                               value={edu.degree}
@@ -1042,7 +1057,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
               <span>
                 ·{' '}
                 {isOverflow
-                  ? `Ajuste automático p/ ${activeMaxPages} pág. ao baixar`
+                  ? 'Conteúdo excede as margens mínimas; revise ou use 2 páginas'
                   : `Dentro de ${activeMaxPages} página(s)`}
               </span>
             )}

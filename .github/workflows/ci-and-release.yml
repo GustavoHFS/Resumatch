@@ -13,8 +13,12 @@ permissions:
 
 jobs:
   validate:
-    name: Privacidade, testes e build
-    runs-on: windows-latest
+    name: Validar (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,23 +32,23 @@ jobs:
       - name: Instalar dependências Python
         run: python -m pip install -e ".[dev]"
       - name: Instalar Chromium para testes A4
-        run: python -m playwright install chromium-headless-shell
+        run: python -m playwright install --with-deps chromium-headless-shell
       - name: Verificar privacidade
         run: python scripts/check_privacy.py
-      - name: Executar testes isolados
-        run: python -m pytest -v
       - name: Instalar dependências frontend
         run: npm --prefix frontend ci
       - name: Compilar interface
         run: npm --prefix frontend run build
+      - name: Executar testes isolados
+        run: python -m pytest -v
       - name: Compilar launcher Windows
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         run: python scripts/build_launcher_exe.py
       - name: Empacotar somente arquivos públicos
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         run: python scripts/package_release.py
       - uses: actions/upload-artifact@v4
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && runner.os == 'Windows'
         with:
           name: Resumatch-Windows
           path: build/Resumatch-Windows.zip

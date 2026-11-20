@@ -10,6 +10,7 @@ import {
 } from '../components/Icons';
 import type { MasterProfile } from '../types/api';
 import styles from './BaseResumePage.module.css';
+import { EducationOrderButtons } from '../components/EducationOrderButtons';
 
 interface Props {
   profile: MasterProfile | null;
@@ -750,6 +751,11 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
             <div key={edu.id} className={styles.itemBlock}>
               <div className={styles.itemTopBar}>
                 <span className={styles.itemLabel}>{edu.degree || `Formação ${idx + 1}`}</span>
+                <EducationOrderButtons index={idx} count={safeEducation.length} onMove={(delta) => {
+                  const education = [...draft.education];
+                  [education[idx], education[idx + delta]] = [education[idx + delta], education[idx]];
+                  setDraft({ ...draft, education, education_order_manual: true });
+                }} />
                 <button
                   type="button"
                   className="iconBtn"
@@ -796,19 +802,6 @@ export const BaseResumePage: React.FC<Props> = ({ profile, onProfileSaved }) => 
                     onChange={(e) => {
                       const next = [...draft.education];
                       next[idx] = { ...edu, period: e.target.value };
-                      setDraft({ ...draft, education: next });
-                    }}
-                  />
-                </div>
-                <div className="field">
-                  <label className="label">Observação opcional</label>
-                  <input
-                    className="input"
-                    placeholder="Opcional"
-                    value={edu.details}
-                    onChange={(e) => {
-                      const next = [...draft.education];
-                      next[idx] = { ...edu, details: e.target.value };
                       setDraft({ ...draft, education: next });
                     }}
                   />

@@ -15,6 +15,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from app.domain.resume_policy import academic_order
 
 SectionKind = Literal[
     "summary",
@@ -149,10 +150,17 @@ class MasterProfile(StrictModel):
     summary: str = Field(default="", max_length=4000)
     experiences: list[ExperienceEntry] = Field(default_factory=list)
     education: list[EducationEntry] = Field(default_factory=list)
+    education_order_manual: bool = False
     courses: list[CourseEntry] = Field(default_factory=list)
     projects: list[ProjectEntry] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     languages: list[LanguageEntry] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def default_academic_priority(self) -> MasterProfile:
+        if not self.education_order_manual:
+            self.education = academic_order(self.education)
+        return self
 
     @field_validator("skills")
     @classmethod

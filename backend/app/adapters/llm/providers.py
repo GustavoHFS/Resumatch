@@ -65,7 +65,7 @@ RESUME_GENERATION_JSON_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
         },
-        "summary": {"type": "string"},
+        "summary": {"type": "string", "maxLength": 420},
         "experiences": {
             "type": "array",
             "items": {
@@ -90,7 +90,7 @@ RESUME_GENERATION_JSON_SCHEMA: dict[str, Any] = {
                     "degree": {"type": "string"},
                     "institution": {"type": "string"},
                     "period": {"type": "string"},
-                    "details": {"type": "string"},
+                    "details": {"type": "string", "maxLength": 0},
                 },
                 "required": ["id", "degree", "institution", "period", "details"],
             },
@@ -284,7 +284,13 @@ def build_resume_generation_prompts(sanitized: SanitizedResumeGenInput) -> tuple
         "5. PRIVACIDADE E PLACEHOLDERS: preserve todos os tokens `[[EMP_1]]`, `[[INST_1]]`, `[[URL_1]]` EXATAMENTE como recebidos "
         "(em `company`, repasse `company_token` literalmente; em `institution`, repasse `institution_token` literalmente).\n"
         f"6. {density_rule}\n"
-        "7. Escreva 100% em Português do Brasil (pt-BR) natural, direto e técnico.\n"
+        "7. RESUMO PROFISSIONAL: um único parágrafo curto, de 3 a 4 linhas reais em A4, "
+        "no máximo 420 caracteres. Condense formação principal, prática relevante e valor específico para a vaga. "
+        "Não copie o resumo longo da base nem repita listas de ferramentas já presentes nas competências.\n"
+        "8. FORMAÇÃO ACADÊMICA: mantenha todos os itens e a ordem recebida, sem rebaixar ou omitir "
+        "o ensino superior em andamento em função da vaga. Somente Curso/Grau, Período/Status e Instituição. "
+        "Nunca inclua descrições, ementas ou notas entre parênteses; details deve ser vazio.\n"
+        "9. Escreva 100% em Português do Brasil (pt-BR) natural, direto e técnico.\n"
         "Retorne APENAS JSON válido seguindo o schema solicitado."
     )
     user_json = json.dumps(sanitized.model_dump(mode="json"), ensure_ascii=False)

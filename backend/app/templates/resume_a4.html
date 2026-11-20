@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ payload.header.full_name }}{% if payload.target_role %} — {{ payload.target_role }}{% endif %}</title>
+  <title>{{ payload.header.full_name }}</title>
   <style>
     {{ font_face_css | safe }}
     :root { --resume-font-family: {{ font_stack | safe }}; }
     {{ stylesheet_css | safe }}
+    {{ layout_css | safe }}
   </style>
 </head>
 <body class="{{ 'standalone-preview' if standalone_preview else '' }}">
@@ -15,9 +16,6 @@
     <div id="resume-flow" class="resume-flow">
       <header class="resume-header">
         <h1 class="candidate-name">{{ payload.header.full_name }}</h1>
-        {% if payload.target_role %}
-        <p class="target-role-line">{{ payload.target_role }}</p>
-        {% endif %}
         {% if payload.header.location_line %}
         <p class="header-line">{{ payload.header.location_line }}</p>
         {% endif %}
@@ -45,7 +43,7 @@
       </header>
 
       {% for section_kind in payload.section_order %}
-        {% set break_cls = ' page-break-before' if section_kind in payload.page_break_before_sections else '' %}
+        {% set break_cls = ' page-break-before' if payload.max_pages > 1 and section_kind in payload.page_break_before_sections else '' %}
 
         {% if section_kind == 'summary' and payload.summary %}
         <section class="resume-section{{ break_cls }}" data-section="summary">
@@ -93,9 +91,7 @@
               {% endif %}
             </div>
             {% if edu.institution %}
-            <p class="entry-sub-line"><strong>{{ edu.institution }}</strong>{% if edu.details %} ({{ edu.details }}){% endif %}</p>
-            {% elif edu.details %}
-            <p class="entry-sub-line">{{ edu.details }}</p>
+            <p class="entry-sub-line"><strong>{{ edu.institution }}</strong></p>
             {% endif %}
           </div>
           {% endfor %}

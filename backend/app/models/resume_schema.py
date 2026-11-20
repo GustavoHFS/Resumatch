@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
+from app.domain.resume_policy import clean_academic_text, concise_summary
 
 from app.models.profile_schema import (
     CandidateHeader,
@@ -75,6 +76,16 @@ class DraftEducationItem(StrictModel):
     period: str = Field(default="", max_length=140)
     details: str = Field(default="", max_length=600)
 
+    @field_validator("degree", "institution", "period", mode="before")
+    @classmethod
+    def clean_academic_fields(cls, value: str, info: ValidationInfo) -> str:
+        return clean_academic_text(value, keep_status=info.field_name == "period")
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def omit_academic_notes(cls, value: str) -> str:
+        return ""
+
 
 class DraftCourseItem(StrictModel):
     id: str = Field(default_factory=lambda: _draft_id("dcrs"), min_length=1, max_length=80)
@@ -132,6 +143,7 @@ class ResumeDraft(StrictModel):
     max_pages: int = Field(default=1, ge=1, le=2)
     font_family: ResumeFontFamily = "Libre Franklin"
     compact_mode: bool = False
+    layout_step: int = Field(default=0, ge=0, le=3)
 
     @field_validator("font_family", mode="before")
     @classmethod
@@ -145,6 +157,11 @@ class ResumeDraft(StrictModel):
 
     header: DraftHeader
     summary: str = Field(default="", max_length=3000)
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def short_summary(cls, value: str) -> str:
+        return concise_summary(value)
     experiences: list[DraftExperienceItem] = Field(default_factory=list)
     education: list[DraftEducationItem] = Field(default_factory=list)
     courses: list[DraftCourseItem] = Field(default_factory=list)

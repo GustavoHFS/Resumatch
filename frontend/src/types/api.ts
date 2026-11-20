@@ -162,6 +162,7 @@ export interface LanguageEntry {
 }
 
 export interface MasterProfile {
+  education_order_manual?: boolean;
   schema_version: '2.1';
   header: {
     full_name: string;
@@ -252,6 +253,7 @@ export interface DraftLanguageItem {
 }
 
 export interface ResumeDraft {
+  layout_step: number;
   target_role: string;
   company: string | null;
   max_pages: number;
