@@ -402,8 +402,19 @@ export const api = {
     ),
 
   /* Candidaturas */
-  listApplications: () =>
-    requestJson<{ total: number; items: ApplicationCard[] }>('/api/applications?limit=200'),
+  listApplications: async () => {
+    const items: ApplicationCard[] = [];
+    let total = 0;
+    do {
+      const page = await requestJson<{ total: number; items: ApplicationCard[] }>(
+        `/api/applications?limit=200&offset=${items.length}`
+      );
+      total = page.total;
+      items.push(...page.items);
+      if (!page.items.length) break;
+    } while (items.length < total);
+    return { total, items };
+  },
 
   enqueueApplication: (opportunityId: string) =>
     requestJson<ApplicationCard>('/api/applications', {

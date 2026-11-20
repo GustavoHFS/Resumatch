@@ -11,10 +11,11 @@ import {
   IconSparkles,
   IconTrash,
 } from '../components/Icons';
-import type { JobListItem, ResumeDraft, ResumeFontFamily, SectionKind } from '../types/api';
+import type { ApplicationCard, JobListItem, ResumeDraft, ResumeFontFamily, SectionKind } from '../types/api';
 import styles from './ResumeStudioPage.module.css';
 
 interface Props {
+  active: boolean;
   aiConnected: boolean;
   initialJob: JobListItem | null;
   initialJobDescription: string;
@@ -44,12 +45,14 @@ const SECTION_NAMES_PT: Record<SectionKind, string> = {
 };
 
 export const ResumeStudioPage: React.FC<Props> = ({
+  active,
   aiConnected,
   initialJob,
   initialJobDescription,
   onAiConnected,
 }) => {
-  const [jobs, setJobs] = useState<JobListItem[]>([]);
+  const [applications, setApplications] = useState<ApplicationCard[]>([]);
+  const [draftOpportunityId, setDraftOpportunityId] = useState<string | null>(null);
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string>(initialJob?.id ?? '');
   const [showManualBox, setShowManualBox] = useState<boolean>(!initialJob);
   const [manualTitle, setManualTitle] = useState<string>(initialJob?.title ?? '');
@@ -84,18 +87,20 @@ export const ResumeStudioPage: React.FC<Props> = ({
   const renderSeqRef = useRef<number>(0);
 
   useEffect(() => {
-    api
-      .getJobs({ limit: 80 })
-      .then((res) => setJobs((current) => [
-        ...current.filter((job) => !res.items.some((item) => item.id === job.id)),
-        ...res.items,
-      ]))
-      .catch(() => {});
-  }, []);
+    if (!active) return;
+    let cancelled = false;
+    api.listApplications().then((res) => {
+      if (!cancelled) setApplications(res.items);
+    }).catch((err) => {
+      if (!cancelled) setNotice(err instanceof Error ? err.message : 'Erro ao carregar candidaturas.');
+    });
+    return () => { cancelled = true; };
+  }, [active, initialJob]);
 
   useEffect(() => {
     if (initialJob) {
-      setJobs((current) => current.some((job) => job.id === initialJob.id) ? current : [initialJob, ...current]);
+      setDraft(null);
+      setDownloadJob(null);
       setSelectedOpportunityId(initialJob.id);
       setManualTitle(initialJob.title);
       setManualCompany(initialJob.company ?? '');
@@ -160,6 +165,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
         font_family: fontFamily,
       });
       setDraft(res.draft);
+      setDraftOpportunityId(res.job_context.opportunity_id);
     } catch (err) {
       setNotice(err instanceof Error ? err.message : 'Não foi possível gerar o currículo.');
     } finally {
@@ -174,8 +180,8 @@ export const ResumeStudioPage: React.FC<Props> = ({
     try {
       const res = await api.exportResumePdf({
         draft,
-        opportunity_id: selectedOpportunityId || null,
-        manual_job_description: !selectedOpportunityId ? manualDescription : undefined,
+        opportunity_id: draftOpportunityId,
+        manual_job_description: !draftOpportunityId ? manualDescription : undefined,
         auto_fit: true,
       });
       setDraft(res.draft);
@@ -310,7 +316,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
                  const id = e.target.value;
                  setSelectedOpportunityId(id);
                  setManualDescription('');
-                 const found = jobs.find((j) => j.id === id);
+                  setDraft(null);
+                  setDownloadJob(null);
+                  const found = applications.find((item) => item.opportunity_id === id)?.job;
                  if (found) {
                    setManualTitle(found.title);
                    setManualCompany(found.company ?? '');
@@ -321,9 +329,9 @@ export const ResumeStudioPage: React.FC<Props> = ({
                }}
             >
               <option value="">Colar descrição avulsa abaixo</option>
-              {jobs.map((j) => (
-                <option key={j.id} value={j.id}>
-                  {j.title} {j.company ? `— ${j.company}` : ''}
+              {applications.map((card) => (
+                <option key={card.opportunity_id} value={card.opportunity_id}>
+                  {card.job.title} {card.job.company ? `— ${card.job.company}` : ''} ({card.stage_label})
                 </option>
               ))}
             </select>

@@ -16,7 +16,7 @@ import type {
 import styles from './JobsPage.module.css';
 
 interface Props {
-  onAdaptJob: (job: JobListItem, descriptionText: string) => void;
+  onAdaptJob: (job: JobListItem, descriptionText: string) => Promise<void>;
 }
 
 const RECENCY_OPTIONS = [
@@ -62,7 +62,6 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [showDiscarded, setShowDiscarded] = useState(false);
   const [recencyFilter, setRecencyFilter] = useState('14d');
   const [areaFilter, setAreaFilter] = useState('');
   const [criteria, setCriteria] = useState<SearchCriteria | null>(null);
@@ -103,7 +102,6 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
         recency: recencyFilter,
         area_id: areaFilter || undefined,
         include_remote: remoteActive ? undefined : false,
-        show_discarded: showDiscarded,
         limit: 100,
       }, signal);
       if (signal?.aborted) return;
@@ -115,7 +113,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [debouncedSearch, recencyFilter, areaFilter, remoteActive, showDiscarded]);
+  }, [debouncedSearch, recencyFilter, areaFilter, remoteActive]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -245,7 +243,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
       await loadJobs();
       if (adapt) {
         const selected = await api.getJobDetail(res.opportunity_id);
-        onAdaptJob(selected.opportunity, selected.opportunity.description_text || pasteForm.description);
+        await onAdaptJob(selected.opportunity, selected.opportunity.description_text || pasteForm.description);
       }
       setNotice('Vaga adicionada à lista.');
     } catch (err) {
@@ -285,11 +283,6 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
             </option>
           ))}
         </select>
-
-        <label className={styles.filterToggle}>
-          <input type="checkbox" checked={showDiscarded} onChange={(e) => setShowDiscarded(e.target.checked)} />
-          Mostrar descartadas
-        </label>
 
         <select
           className="select"
@@ -358,7 +351,7 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
             <div className={styles.empty}>
               <p>Nenhuma vaga listada para este filtro.</p>
               <button type="button" className="btnSubtle" onClick={() => {
-                setSearch(''); setAreaFilter(''); setRecencyFilter('14d'); setShowDiscarded(false);
+                setSearch(''); setAreaFilter(''); setRecencyFilter('14d');
               }}>Limpar filtros</button>
               <button type="button" className="btnGhost" onClick={() => void handleRunDiscovery()}>Buscar novas vagas</button>
             </div>
@@ -403,11 +396,12 @@ export const JobsPage: React.FC<Props> = ({ onAdaptJob }) => {
                     type="button"
                     className={`btnGhost ${styles.primaryButton}`}
                     onClick={() =>
-                      onAdaptJob(detail.opportunity, detail.opportunity.description_text || '')
+                      void onAdaptJob(detail.opportunity, detail.opportunity.description_text || '')
+                        .catch((err) => setNotice(err instanceof Error ? err.message : 'Erro ao salvar candidatura.'))
                     }
                   >
                     <IconSparkles size={15} />
-                    <span>Adaptar Currículo</span>
+                    <span>Adaptar no Estúdio</span>
                   </button>
 
                   <button

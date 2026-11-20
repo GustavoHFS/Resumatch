@@ -132,14 +132,11 @@ def list_jobs(
     recency: str | None = None,
     include_remote: bool | None = None,
     search: str | None = None,
-    show_discarded: bool = True,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
     filters = []
-    if not show_discarded:
-        filters.append(col(JobOpportunity.classification).notin_(("descartada", "fora_foco")))
     if area_id:
         filters.append(JobOpportunity.area_id == area_id)
     if classification:

@@ -19,8 +19,8 @@ type NavTab = 'jobs' | 'studio' | 'applications' | 'profile';
 
 const NAV_ITEMS: Array<{ key: NavTab; label: string; Icon: React.FC<{ size?: number }> }> = [
   { key: 'jobs', label: 'Vagas', Icon: IconBriefcase },
-  { key: 'studio', label: 'Estúdio', Icon: IconStudioDoc },
   { key: 'applications', label: 'Candidaturas', Icon: IconBoardCheck },
+  { key: 'studio', label: 'Estúdio', Icon: IconStudioDoc },
   { key: 'profile', label: 'Currículo Base', Icon: IconUserDoc },
 ];
 
@@ -90,7 +90,8 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const handleAdaptJob = (job: JobListItem, descriptionText: string) => {
+  const handleAdaptJob = async (job: JobListItem, descriptionText: string) => {
+    await api.enqueueApplication(job.id);
     setStudioJob(job);
     setStudioJobDescription(descriptionText);
     setActiveTab('studio');
@@ -150,6 +151,7 @@ export const App: React.FC = () => {
 
           <div hidden={activeTab !== 'studio'}>
             <ResumeStudioPage
+              active={activeTab === 'studio'}
               aiConnected={Boolean(health?.ai_connected)}
               initialJob={studioJob}
               initialJobDescription={studioJobDescription}
@@ -157,7 +159,7 @@ export const App: React.FC = () => {
             />
           </div>
 
-          {activeTab === 'applications' && <ApplicationsKanbanPage />}
+          {activeTab === 'applications' && <ApplicationsKanbanPage onAdaptJob={handleAdaptJob} />}
 
           <div hidden={activeTab !== 'profile'}>
             <BaseResumePage

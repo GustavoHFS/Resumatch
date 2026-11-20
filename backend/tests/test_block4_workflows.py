@@ -150,3 +150,57 @@ async def test_export_without_opportunity_links_immutable_pdf_to_ready_card(tmp_
         })
         assert sent.status_code == 200, sent.text
         assert sent.json()["user_confirmed_at"]
+
+
+@pytest.mark.anyio
+async def test_all_classifications_visible_with_filters_and_chronological_order(tmp_path: Path) -> None:
+    async with client_for(tmp_path) as (client, app):
+        with Session(app.state.engine) as session:
+            for index, classification in enumerate(["aprovada", "descartada", "fora_foco"]):
+                session.add(JobOpportunity(
+                    id=f"visibility-{index}", title="Suporte demonstrativo",
+                    company="Empresa Fictícia", classification=classification,
+                    published_at=f"2026-11-{10 + index}T12:00:00+00:00",
+                    discovered_at="2026-11-13T12:00:00+00:00",
+                    last_seen_at="2026-11-13T12:00:00+00:00",
+                    original_url=f"https://example.com/visibility-{index}",
+                    canonical_url=f"https://example.com/visibility-{index}",
+                ))
+            session.commit()
+        response = await client.get("/api/jobs", params={"search": "demonstrativo"})
+        assert response.status_code == 200
+        assert [item["classification"] for item in response.json()["items"]] == [
+            "fora_foco", "descartada", "aprovada",
+        ]
+        filtered = await client.get("/api/jobs", params={"classification": "descartada"})
+        assert all(item["classification"] == "descartada" for item in filtered.json()["items"])
+
+
+@pytest.mark.anyio
+async def test_saved_application_export_links_pdf_without_regressing_sent_stage(tmp_path: Path) -> None:
+    async with client_for(tmp_path) as (client, app):
+        opp_id = (await client.post("/api/jobs/import", json={
+            "title": "Suporte Júnior", "description": "Suporte técnico com Python e SQL.",
+        })).json()["opportunity_id"]
+        # Assisted manual imports are already tracked; enqueue must remain idempotent.
+        for _ in range(2):
+            saved = await client.post("/api/applications", json={"opportunity_id": opp_id})
+            assert saved.json()["stage"] == "candidatura_a_preparar"
+        assert (await client.get("/api/applications")).json()["total"] == 1
+        profile = MasterProfile.model_validate((await client.get("/api/profile")).json())
+        draft = ResumeDraft(target_role="Suporte Júnior",
+                            header=build_draft_header_from_profile(profile.header),
+                            summary="Suporte técnico com Python e SQL.")
+        payload = {"opportunity_id": opp_id, "draft": draft.model_dump(mode="json")}
+        exported = await client.post("/api/resumes/export-pdf", json=payload)
+        assert exported.status_code == 200, exported.text
+        card = (await client.get("/api/applications")).json()["items"][0]
+        assert card["stage"] == "curriculo_preparado"
+        assert card["queue_state"] == "curriculo_preparado"
+        assert card["resume_version"]["id"] == exported.json()["version_id"]
+        assert (await client.get(f"/api/resumes/versions/{card['resume_version']['id']}/pdf")).status_code == 200
+        await client.patch(f"/api/applications/{opp_id}/stage", json={
+            "stage": "enviada_manualmente", "confirm_manual_submission": True,
+        })
+        assert (await client.post("/api/resumes/export-pdf", json=payload)).status_code == 200
+        assert (await client.get("/api/applications")).json()["items"][0]["stage"] == "enviada_manualmente"

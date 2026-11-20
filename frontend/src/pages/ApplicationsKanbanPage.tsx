@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, SERVER_DISCONNECTED_MESSAGE } from '../api/client';
 import { IconClose, IconExternal, IconFile, IconTrash } from '../components/Icons';
-import type { ApplicationCard, KanbanStage } from '../types/api';
+import type { ApplicationCard, JobListItem, KanbanStage } from '../types/api';
 import styles from './ApplicationsKanbanPage.module.css';
 
 type ColumnBucket = 'prep' | 'ready' | 'sent' | 'archived';
@@ -45,7 +45,9 @@ const bucketForStage = (stage: KanbanStage): ColumnBucket => {
   return 'prep';
 };
 
-export const ApplicationsKanbanPage: React.FC = () => {
+export const ApplicationsKanbanPage: React.FC<{
+  onAdaptJob: (job: JobListItem, description: string) => Promise<void>;
+}> = ({ onAdaptJob }) => {
   const [cards, setCards] = useState<ApplicationCard[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -142,6 +144,14 @@ export const ApplicationsKanbanPage: React.FC = () => {
                       </div>
 
                       <div className={styles.cardFooter}>
+                        <button type="button" className="btnSubtle btnSmall" onClick={async () => {
+                          try {
+                            const detail = await api.getJobDetail(card.opportunity_id);
+                            await onAdaptJob(detail.opportunity, detail.opportunity.description_text || '');
+                          } catch (err) {
+                            setNotice(err instanceof Error ? err.message : 'Não foi possível abrir o Estúdio.');
+                          }
+                        }}>Abrir no Estúdio ✨</button>
                         {col.key === 'ready' && (
                           <div className={styles.quickActions}>
                             {card.job.original_url && !card.job.original_url.startsWith('https://manual.resumatch.local/') && !card.job.original_url.includes('vaga-manual.local') && (

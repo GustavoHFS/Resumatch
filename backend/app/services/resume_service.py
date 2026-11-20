@@ -352,6 +352,7 @@ async def export_validated_pdf(
             tracking.resume_version_id = version_id
             if tracking.stage in {"descoberta", "candidatura_a_preparar"}:
                 tracking.stage = "curriculo_preparado"
+                tracking.queue_state = "curriculo_preparado"
             session.add(tracking)
 
         session.add(
@@ -359,7 +360,7 @@ async def export_validated_pdf(
                 opportunity_id=opp.id,
                 created_at=now_iso,
                 event_source="tracking",
-                stage="curriculo_preparado",
+                stage=tracking.stage,
                 notes=f"Currículo PDF A4 exportado ({version_id[:8]}, SHA-256 {new_pdf_sha[:12]})",
             )
         )
