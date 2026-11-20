@@ -1,6 +1,5 @@
-# Strict isolation: NEVER copy local user_data, secrets, or git history into Docker layers
+# Dockerfile-specific ignore: Docker reads this with the repository-root context.
 user_data/
-!user_data/.gitkeep
 Dados Sensíveis/
 **/Dados Sensíveis/
 .git/
@@ -17,3 +16,4 @@ frontend/dist/
 *.sqlite3-*
 __pycache__/
 .pytest_cache/
+*.exe

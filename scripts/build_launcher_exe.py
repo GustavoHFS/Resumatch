@@ -36,6 +36,8 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
+[assembly: System.Reflection.AssemblyCopyright("Copyright (c) 2026 Gustavo Henrique Francisco da Silva")]
+
 namespace ResumatchLauncher
 {
     internal static class Program

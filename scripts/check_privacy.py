@@ -53,6 +53,20 @@ FORBIDDEN_FILENAMES = {
     "AGENTS.md",
 }
 
+# Public credit is a narrow exception, never an exemption for contact details.
+PUBLIC_AUTHOR_SHORT = "Gustavo" + " Henrique"
+PUBLIC_AUTHOR = PUBLIC_AUTHOR_SHORT + " Francisco da Silva"
+AUTHOR_CREDIT_FILES = {
+    "LICENSE", "README.md", "pyproject.toml", "frontend/package.json",
+    "frontend/src/components/SettingsDrawer.tsx", "scripts/build_launcher_exe.py",
+}
+
+
+def is_author_credit_path(rel_path: Path) -> bool:
+    return rel_path.as_posix() in AUTHOR_CREDIT_FILES or (
+        bool(rel_path.parts) and rel_path.parts[0] == "docs"
+    )
+
 GENERIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "PERSONAL_EMAIL",
@@ -217,7 +231,7 @@ def check_path_policy(rel_path: Path) -> list[Violation]:
     posix = rel_path.as_posix()
     parts = rel_path.parts
 
-    if parts and parts[0] == "user_data" and posix != "user_data/.gitkeep":
+    if parts and parts[0] == "user_data":
         violations.append(
             Violation(posix, None, "FORBIDDEN_PRIVATE_PATH", "Files inside user_data/ must never be tracked")
         )
@@ -288,8 +302,20 @@ def scan_file_contents(
                     )
                 )
         lowered = line.casefold()
+        credit_line = lowered
+        if is_author_credit_path(rel_path):
+            credit_line = credit_line.replace(PUBLIC_AUTHOR.casefold(), "").replace(
+                PUBLIC_AUTHOR_SHORT.casefold(), ""
+            )
+        elif PUBLIC_AUTHOR_SHORT.casefold() in lowered:
+            violations.append(Violation(posix, line_no, "PRIVATE_CANDIDATE_NAME",
+                                        "Public author name outside credit allowlist (value redacted)"))
         for secret in dynamic_secrets:
-            if secret.value.casefold() in lowered:
+            searchable = credit_line if (
+                secret.category == "PRIVATE_CANDIDATE_NAME"
+                and secret.value.casefold() in {PUBLIC_AUTHOR.casefold(), PUBLIC_AUTHOR_SHORT.casefold()}
+            ) else lowered
+            if secret.value.casefold() in searchable:
                 violations.append(
                     Violation(
                         posix,
@@ -324,9 +350,6 @@ def collect_workspace_files(repo_root: Path) -> list[Path]:
             if rel_dir == Path(".") and filename.lower().endswith(".exe"):
                 continue
             collected.append(rel_file)
-    gitkeep = Path("user_data/.gitkeep")
-    if (repo_root / gitkeep).is_file():
-        collected.append(gitkeep)
 
     # If .git exists, also verify git ls-files hasn't tracked anything inside ignored dirs!
     if (repo_root / ".git").exists():

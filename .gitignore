@@ -2,9 +2,8 @@
 # PRIVACY & PERSONAL DATA ISOLATION (CRITICAL — NEVER REMOVE)
 # ==============================================================================
 # All personal resumes, real profiles, SQLite databases, exports, and legacy
-# archives live strictly inside user_data/. Only the empty .gitkeep is tracked.
-user_data/*
-!user_data/.gitkeep
+# archives live strictly inside user_data/. Nothing inside is tracked.
+user_data/
 
 # Defense-in-depth: block sensitive folders and document formats anywhere in repo
 Dados Sensíveis/
@@ -65,7 +64,7 @@ htmlcov/
 # ==============================================================================
 # FRONTEND (NODE / VITE), NATIVE LAUNCHER & OS
 # ==============================================================================
-/*.exe
+*.exe
 node_modules/
 **/node_modules/
 frontend/node_modules/

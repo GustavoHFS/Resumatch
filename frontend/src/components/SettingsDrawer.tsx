@@ -551,6 +551,9 @@ export const SettingsDrawer: React.FC<Props> = ({ open, onClose, onLlmUpdated })
               </button>
             </div>
           </section>
+          <footer style={{ fontSize: 11, opacity: 0.65, marginTop: 24 }}>
+            Resumatch • Desenvolvido por Gustavo Henrique Francisco da Silva
+          </footer>
         </div>
       </aside>
     </div>

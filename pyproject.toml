@@ -9,6 +9,7 @@ description = "Resumatch — Local-first job discovery, AI-tailored ATS A4 resum
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "Gustavo Henrique Francisco da Silva" }]
 dependencies = [
     "pydantic>=2.7,<3.0",
     "pydantic-settings>=2.3,<3.0",
