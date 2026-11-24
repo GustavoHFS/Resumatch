@@ -1,7 +1,7 @@
 """Exclusive Google Gemini async adapter (`GeminiAdapter`) via lightweight `httpx`.
 
 - Zero heavy vendor SDKs; uses OS truststore TLS, header-only secret hygiene (`x-goog-api-key`),
-  and automatic fallback across 2.5 Flash, Flash Lite and Flash Latest.
+   and bounded retry/fallback across Flash Lite, Flash and compatible discovered models.
 - Supports real-time zero-cost key validation (`validate_connection`), block-aware Base Resume
   extraction (`extract_profile_from_text`), and tailored resume generation (`generate_tailored_resume`).
 """
@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import ssl
+import time
 from typing import Any, Callable, Literal, Protocol
 
 import httpx
@@ -18,7 +20,7 @@ import truststore
 from pydantic import Field
 
 from app.adapters.llm.pii_stripper import SanitizedResumeGenInput
-from app.core.config import AppSettings
+from app.core.config import AppSettings, DEFAULT_GEMINI_MODELS
 from app.models.profile_schema import StrictModel
 
 ProviderName = Literal["gemini"]
@@ -344,11 +346,13 @@ class GeminiAdapter:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
-        fallback_model: str = "gemini-2.5-flash-lite",
-        timeout_seconds: float = 25.0,
+        model: str = "gemini-2.5-flash-lite",
+        fallback_model: str = "gemini-2.5-flash",
+        timeout_seconds: float = 8.0,
         transport: httpx.AsyncBaseTransport | None = None,
         on_model_selected: Callable[[str], None] | None = None,
+        total_timeout_seconds: float = 55.0,
+        sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
         if not api_key.strip():
             raise LlmAdapterError(
@@ -360,12 +364,38 @@ class GeminiAdapter:
         self._timeout = timeout_seconds
         self._transport = transport
         self._on_model_selected = on_model_selected
+        self._total_timeout = min(55.0, total_timeout_seconds)
+        self._sleep = sleep
+        self._without_thinking: set[str] = set()
+
+    @staticmethod
+    def _valid_model(model: str) -> bool:
+        return bool(re.fullmatch(r"gemini-[A-Za-z0-9._-]+", model)) and not any(
+            variant in model.lower() for variant in
+            ("embedding", "imagen", "veo", "tts", "robotics", "computer-use")
+        )
 
     def _models_to_try(self) -> list[str]:
-        return list(dict.fromkeys([
-            self.model_name, "gemini-2.5-flash", self._fallback_model,
-            "gemini-2.5-flash-lite", "gemini-flash-latest",
-        ]))
+        return [model for model in dict.fromkeys([
+            self.model_name, *DEFAULT_GEMINI_MODELS, self._fallback_model,
+        ]) if self._valid_model(model)]
+
+    async def _discover_models(self, client: httpx.AsyncClient) -> list[str]:
+        """Read the model catalog without exposing credentials in URLs or logs."""
+        try:
+            response = await client.get("https://generativelanguage.googleapis.com/v1beta/models",
+                                        headers={"x-goog-api-key": self._api_key})
+            if response.status_code != 200:
+                return []
+            models = response.json().get("models", [])
+            return list(dict.fromkeys(
+                item["name"].removeprefix("models/") for item in models
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+                and self._valid_model(item["name"].removeprefix("models/"))
+                and "generateContent" in (item.get("supportedGenerationMethods") or [])
+            ))[:8]
+        except (httpx.HTTPError, ValueError, AttributeError, TypeError):
+            return []
 
     def _remember_model(self, model: str) -> None:
         self.model_name = model
@@ -388,7 +418,6 @@ class GeminiAdapter:
         """Validates the Google AI Studio key in real time with zero token cost."""
         models_to_try = self._models_to_try()
         async with _make_http_client(min(8.0, self._timeout), self._transport) as client:
-            last_status = 0
             for candidate_model in models_to_try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}"
                 try:
@@ -398,12 +427,16 @@ class GeminiAdapter:
                         f"Não foi possível conectar ao Google no momento ({type(exc).__name__})."
                     ) from exc
 
-                last_status = res.status_code
                 if res.status_code == 200:
                     self._remember_model(candidate_model)
                     return candidate_model
                 if res.status_code in {400, 401, 403}:
                     raise self._google_error(res)
+
+            discovered = await self._discover_models(client)
+            if discovered:
+                self._remember_model(discovered[0])
+                return discovered[0]
 
         raise self._google_error(res)
 
@@ -421,51 +454,14 @@ class GeminiAdapter:
                 "responseJsonSchema": schema,
             },
         }
-        res: httpx.Response | None = None
-        used_model = self.model_name
-        retry_delay = 0.02 if self._transport is not None else 1.2
-
-        async with _make_http_client(self._timeout, self._transport) as client:
-            for idx, candidate_model in enumerate(models_to_try):
-                used_model = candidate_model
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
-
-                # Retry the primary model for transient 429/503 before trying the next model.
-                max_attempts = 2 if idx == 0 else 1
-                for attempt in range(max_attempts):
-                    try:
-                        res = await client.post(
-                            url,
-                            json=body,
-                            headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
-                        )
-                    except httpx.HTTPError as exc:
-                        if attempt + 1 < max_attempts:
-                            await asyncio.sleep(retry_delay)
-                            continue
-                        raise LlmAdapterError(
-                            f"Falha de rede ao comunicar com o Google ({type(exc).__name__})."
-                        ) from exc
-
-                    if res.status_code in {429, 503} and attempt + 1 < max_attempts:
-                        await asyncio.sleep(retry_delay)
-                        continue
-                    break
-
-                assert res is not None
-                if res.status_code in {404, 429, 503} and idx + 1 < len(models_to_try):
-                    continue
-                break
-
-        assert res is not None
-        if res.status_code in {400, 401, 403}:
-            raise self._google_error(res)
-        if res.status_code == 429:
-            raise self._google_error(res)
-        if res.status_code == 503:
-            raise LlmAdapterError("O servidor do Google está temporariamente sobrecarregado. Tente novamente em instantes.")
-        if res.status_code != 200:
-            raise self._google_error(res)
+        try:
+            async with asyncio.timeout(self._total_timeout):
+                res, used_model = await self._generate_with_fallback(body, models_to_try)
+        except TimeoutError as exc:
+            raise LlmAdapterError(
+                "O Google não respondeu dentro do prazo, mesmo com modelos alternativos. "
+                "Tente novamente em instantes; nenhum currículo foi salvo."
+            ) from exc
 
         data = res.json()
         try:
@@ -494,6 +490,74 @@ class GeminiAdapter:
             token_usage=usage,
         )
 
+    async def _generate_with_fallback(
+        self, body: dict[str, Any], models: list[str],
+    ) -> tuple[httpx.Response, str]:
+        deadline = time.monotonic() + self._total_timeout
+        attempts: dict[str, int] = {}
+        retry_models: list[str] = []
+        discovered = False
+        failures = 0
+        last_error = LlmAdapterError("Nenhum modelo de texto do Google está disponível no momento.")
+        queue = list(models)
+        async with _make_http_client(min(8.0, self._timeout), self._transport) as client:
+            index = 0
+            while index < len(queue) or not discovered:
+                if index == len(queue):
+                    discovered = True
+                    dynamic = await self._discover_models(client)
+                    queue.extend(model for model in dynamic if model not in attempts)
+                    queue.extend(retry_models)
+                    if index == len(queue):
+                        break
+                model = queue[index]
+                index += 1
+                attempts[model] = attempts.get(model, 0) + 1
+                config = dict(body["generationConfig"])
+                if model.startswith("gemini-2.5-") and model not in self._without_thinking:
+                    config["thinkingConfig"] = {"thinkingBudget": 0}
+                request_body = {**body, "generationConfig": config}
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                while True:
+                    try:
+                        response = await client.post(
+                            url, json=request_body, headers={"x-goog-api-key": self._api_key},
+                            timeout=httpx.Timeout(max(.01, min(8.0, self._timeout, deadline - time.monotonic()))),
+                        )
+                    except httpx.RequestError as exc:
+                        last_error = LlmAdapterError(
+                            f"Falha de rede ou tempo limite ao comunicar com o Google ({type(exc).__name__})."
+                        )
+                        transient = True
+                        break
+                    if response.status_code == 200:
+                        return response, model
+                    # Disable only an explicitly rejected optional field, never retry bad credentials/payloads.
+                    error = self._google_error(response)
+                    if response.status_code == 400 and "thinkingConfig" in config and any(
+                        field in str(error).lower() for field in ("thinkingconfig", "thinking_config", "thinkingbudget", "thinking_budget")
+                    ):
+                        self._without_thinking.add(model)
+                        config.pop("thinkingConfig")
+                        continue
+                    transient = response.status_code == 429 or 500 <= response.status_code <= 599
+                    if not transient and response.status_code != 404:
+                        raise error
+                    last_error = error
+                    break
+                if transient:
+                    if attempts[model] < 2:
+                        if discovered:
+                            queue.append(model)
+                        else:
+                            retry_models.append(model)
+                    delay = min(1.5 * 2 ** min(failures, 1), max(0, deadline - time.monotonic()))
+                    failures += 1
+                    await self._sleep(delay)
+        raise LlmAdapterError(
+            f"Os modelos alternativos do Google foram tentados sem sucesso. {last_error}"
+        )
+
     async def generate_tailored_resume(
         self, sanitized: SanitizedResumeGenInput
     ) -> LlmJsonCallResult:
@@ -516,4 +580,5 @@ def build_llm_adapter(
         timeout_seconds=settings.llm_timeout_seconds,
         transport=transport,
         on_model_selected=lambda model: setattr(settings, "gemini_model", model),
+        total_timeout_seconds=settings.llm_total_timeout_seconds,
     )

@@ -59,7 +59,7 @@ class PersistedLlmSettings(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-flash-lite"
 
 
 def serialize_masked_llm_settings(settings: AppSettings) -> dict[str, Any]:

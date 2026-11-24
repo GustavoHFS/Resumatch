@@ -10,6 +10,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_GEMINI_MODELS = (
+    "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite",
+)
 
 
 def _normalize_token(value: str) -> str:
@@ -55,11 +58,12 @@ class AppSettings(BaseSettings):
     scheduler_default_interval_minutes: int = 360
     pdf_browser_idle_timeout_seconds: int = 120
 
-    llm_timeout_seconds: float = 25.0
+    llm_timeout_seconds: float = 8.0
+    llm_total_timeout_seconds: float = Field(default=55.0, gt=0, le=55)
     max_config_backups: int = 10
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_fallback_model: str = "gemini-2.5-flash-lite"
+    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_fallback_model: str = "gemini-2.5-flash"
 
     @property
     def ai_connected(self) -> bool:

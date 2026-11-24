@@ -24,6 +24,7 @@ from app.adapters.llm.providers import build_llm_adapter
 from app.adapters.pdf.ats_validator import validate_ats_pdf
 from app.adapters.pdf.html_renderer import render_resume_a4_html
 from app.core.config import AppSettings, assert_safe_path
+from app.domain.job_text import compact_job_description
 from app.domain.triage_engine import normalize_text
 from app.models import (
     ApplicationEvent,
@@ -163,7 +164,7 @@ async def generate_ai_resume_draft(
         blocked=blocked,
         job_title=job_title,
         company=company,
-        job_description=job_desc,
+        job_description=compact_job_description(job_desc),
         max_pages=req.max_pages,
     )
 

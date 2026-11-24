@@ -374,7 +374,7 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       },
-      45000
+      60000
     ),
 
   renderResumeHtml: (draft: ResumeDraft, signal?: AbortSignal) =>

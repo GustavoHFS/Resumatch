@@ -13,6 +13,7 @@ Protects two outbound LLM flows:
 """
 
 from __future__ import annotations
+from app.domain.job_text import compact_job_description
 
 import json
 import re
@@ -216,7 +217,7 @@ def strip_pii_for_resume_generation(
     sanitized = SanitizedResumeGenInput(
         max_pages=max_pages,
         target_job_title=masker.mask_text(job_title),
-        target_job_description=masker.mask_text(job_description),
+        target_job_description=compact_job_description(masker.mask_text(compact_job_description(job_description))),
         base_summary=masker.mask_text(profile.summary),
         experiences=[
             SanitizedExperienceInput(

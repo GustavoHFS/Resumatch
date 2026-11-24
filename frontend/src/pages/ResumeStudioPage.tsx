@@ -441,7 +441,7 @@ export const ResumeStudioPage: React.FC<Props> = ({
               onClick={handleGenerate}
             >
               <IconSparkles size={15} />
-              <span>{generating ? 'Gerando rascunho...' : 'Gerar com IA'}</span>
+              <span>{generating ? 'Gerando com IA (aguardando resposta do Google)...' : 'Gerar com IA'}</span>
             </button>
           </div>
         </div>

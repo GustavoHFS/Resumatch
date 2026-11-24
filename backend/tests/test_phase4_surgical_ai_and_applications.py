@@ -203,11 +203,14 @@ class TestPIIStripperAndLlmProvidersV2:
 
         fake_gem_key = "test-gem-token-not-real"
 
+        async def no_backoff(_seconds: float) -> None:
+            pass
+
         def gemini_handler(req: httpx.Request) -> httpx.Response:
             assert fake_gem_key not in str(req.url)
             assert req.headers.get("x-goog-api-key") == fake_gem_key
             if req.method == "GET":
-                return httpx.Response(200, json={"name": "models/gemini-2.5-flash"})
+                return httpx.Response(200, json={"name": "models/gemini-2.5-flash-lite"})
             return httpx.Response(
                 200,
                 json={
@@ -221,13 +224,14 @@ class TestPIIStripperAndLlmProvidersV2:
             )
 
         gem = GeminiAdapter(api_key=fake_gem_key, transport=httpx.MockTransport(gemini_handler))
-        assert await gem.validate_connection() == "gemini-2.5-flash"
+        assert await gem.validate_connection() == "gemini-2.5-flash-lite"
         gem_res = await gem.generate_tailored_resume(ctx.sanitized)
         assert gem_res.provider == "gemini"
         assert gem_res.token_usage.total_tokens == 250
 
         gem_err = GeminiAdapter(
             api_key=fake_gem_key,
+            sleep=no_backoff,
             transport=httpx.MockTransport(lambda r: httpx.Response(429, text="quota")),
         )
         with pytest.raises(LlmAdapterError) as exc_info:
@@ -255,6 +259,7 @@ class TestPIIStripperAndLlmProvidersV2:
 
         gem_fallback = GeminiAdapter(
             api_key=fake_gem_key,
+            model="gemini-2.5-flash", sleep=no_backoff,
             transport=httpx.MockTransport(fallback_429_handler),
         )
         fb_res = await gem_fallback.generate_tailored_resume(ctx.sanitized)
